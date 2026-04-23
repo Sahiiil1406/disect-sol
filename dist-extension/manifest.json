@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "My React Router Extension",
+  "version": "0.1.0",
+  "description": "Basic Chrome extension scaffold built with Vite.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "My Extension"
+  },
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["assets/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
