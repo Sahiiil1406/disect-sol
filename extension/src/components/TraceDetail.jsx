@@ -32,6 +32,53 @@ function flattenImportantParams(value) {
   }));
 }
 
+function buildInstructionDecodedPairs(instruction) {
+  if (!instruction || typeof instruction !== "object") {
+    return [];
+  }
+
+  const decoded = instruction.decoded;
+  const pairs = [];
+
+  if (decoded && typeof decoded === "object") {
+    for (const [key, raw] of Object.entries(decoded)) {
+      if (raw === undefined || raw === null || raw === "") {
+        continue;
+      }
+
+      pairs.push({
+        key,
+        value:
+          typeof raw === "string" ||
+          typeof raw === "number" ||
+          typeof raw === "boolean"
+            ? String(raw)
+            : JSON.stringify(raw),
+      });
+    }
+  }
+
+  if (instruction.dataLength !== null && instruction.dataLength !== undefined) {
+    pairs.push({ key: "dataLength", value: String(instruction.dataLength) });
+  }
+
+  if (instruction.dataEncoding) {
+    pairs.push({
+      key: "dataEncoding",
+      value: String(instruction.dataEncoding),
+    });
+  }
+
+  if (instruction.dataPreviewHex) {
+    pairs.push({
+      key: "dataPreviewHex",
+      value: String(instruction.dataPreviewHex),
+    });
+  }
+
+  return pairs.slice(0, 12);
+}
+
 function buildMinimalParameterList(trace, cleanSummary, paramSummary) {
   const txPreview = trace?.meta?.txPreview || null;
   const list = [];
@@ -114,6 +161,7 @@ export function TraceDetail({
   onChangeViewMode,
   cleanSummary,
   txInsights,
+  accountStorageInsights,
 }) {
   const metrics = useMemo(() => {
     const details = txInsights?.details;
@@ -139,13 +187,8 @@ export function TraceDetail({
                 ? "Confirmed"
                 : "Pending",
       fee:
-        typeof feeLamports === "number"
-          ? formatLamports(feeLamports)
-          : "n/a",
-      compute:
-        typeof computeUnits === "number"
-          ? `${computeUnits} CU`
-          : "n/a",
+        typeof feeLamports === "number" ? formatLamports(feeLamports) : "n/a",
+      compute: typeof computeUnits === "number" ? `${computeUnits} CU` : "n/a",
       slot: statValue(details?.slot),
       instructionCount: statValue(
         details?.transaction?.message?.instructions?.length ??
@@ -178,6 +221,9 @@ export function TraceDetail({
     );
   }
 
+  const readRequestLog = trace?.meta?.readRequest || null;
+  const readResultLog = trace?.meta?.readResult || null;
+
   if (viewMode === "clean") {
     const importantParams = buildMinimalParameterList(
       trace,
@@ -205,6 +251,13 @@ export function TraceDetail({
             onClick={() => onChangeViewMode("json")}
           >
             JSON
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "accounts" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("accounts")}
+          >
+            Account Storage
           </button>
         </div>
 
@@ -310,6 +363,24 @@ export function TraceDetail({
           </section>
         )}
 
+        {(readRequestLog || readResultLog) && (
+          <section className="clean-section">
+            <h3>Read Logs</h3>
+            {readRequestLog && (
+              <details open className="detail-block read-log-block">
+                <summary>Request</summary>
+                <pre>{JSON.stringify(readRequestLog, null, 2)}</pre>
+              </details>
+            )}
+            {readResultLog && (
+              <details open className="detail-block read-log-block">
+                <summary>Result</summary>
+                <pre>{JSON.stringify(readResultLog, null, 2)}</pre>
+              </details>
+            )}
+          </section>
+        )}
+
         {Array.isArray(cleanSummary?.accounts) &&
           cleanSummary.accounts.length > 0 && (
             <section className="clean-section">
@@ -324,6 +395,49 @@ export function TraceDetail({
                     {account.signer ? " • signer" : ""}
                   </span>
                 ))}
+              </div>
+            </section>
+          )}
+
+        {Array.isArray(cleanSummary?.instructions) &&
+          cleanSummary.instructions.length > 0 && (
+            <section className="clean-section">
+              <h3>Instruction decoder</h3>
+              <div className="decoded-instruction-list">
+                {firstItems(cleanSummary.instructions, 10).map(
+                  (instruction) => {
+                    const decodedPairs =
+                      buildInstructionDecodedPairs(instruction);
+                    return (
+                      <article
+                        key={`${instruction.index}-${instruction.programId}`}
+                        className="decoded-instruction-card"
+                      >
+                        <p className="meta">
+                          #{instruction.index} - {instruction.programId}
+                        </p>
+                        <p className="meta">
+                          Accounts: {statValue(instruction.accountCount)}
+                        </p>
+                        {decodedPairs.length > 0 ? (
+                          <div className="clean-kv-list">
+                            {decodedPairs.map((pair) => (
+                              <div
+                                key={`${instruction.index}-${pair.key}`}
+                                className="clean-kv-item"
+                              >
+                                <span>{pair.key}</span>
+                                <strong>{pair.value}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="meta">No decoded fields available</p>
+                        )}
+                      </article>
+                    );
+                  },
+                )}
               </div>
             </section>
           )}
@@ -344,6 +458,170 @@ export function TraceDetail({
             {txInsights.error}
           </p>
         )}
+      </section>
+    );
+  }
+
+  if (viewMode === "accounts") {
+    return (
+      <section className="detail-panel">
+        <div
+          className="detail-mode-tabs"
+          role="tablist"
+          aria-label="Detail mode"
+        >
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "clean" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("clean")}
+          >
+            Clean UI
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "json" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("json")}
+          >
+            JSON
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "accounts" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("accounts")}
+          >
+            Account Storage
+          </button>
+        </div>
+
+        <div className="clean-hero">
+          <h2>Account Storage</h2>
+          <p className="clean-subtitle">
+            What data is currently stored in accounts related to this
+            transaction
+          </p>
+          <p className="meta">Method: {trace?.method || "unknown"}</p>
+          <p className="meta">
+            RPC:{" "}
+            {accountStorageInsights?.endpointUsed ||
+              txInsights?.endpointUsed ||
+              "n/a"}
+          </p>
+          {accountStorageInsights?.slot !== null &&
+            accountStorageInsights?.slot !== undefined && (
+              <p className="meta">Slot: {accountStorageInsights.slot}</p>
+            )}
+        </div>
+
+        {accountStorageInsights?.loading && (
+          <p className="meta">Fetching account storage...</p>
+        )}
+
+        {accountStorageInsights?.error && (
+          <p className="meta error">{accountStorageInsights.error}</p>
+        )}
+
+        {Array.isArray(accountStorageInsights?.accounts) &&
+          accountStorageInsights.accounts.length > 0 && (
+            <section className="clean-section">
+              <h3>Related Accounts</h3>
+              <div className="decoded-instruction-list">
+                {accountStorageInsights.accounts.map((account) => (
+                  <article
+                    key={account.pubkey}
+                    className="decoded-instruction-card"
+                  >
+                    <p className="meta">{account.pubkey}</p>
+                    {!account.found ? (
+                      <p className="meta error">
+                        Account not found on selected endpoint
+                      </p>
+                    ) : (
+                      <div className="clean-kv-list">
+                        <div className="clean-kv-item">
+                          <span>owner</span>
+                          <strong>{account.owner || "n/a"}</strong>
+                        </div>
+                        <div className="clean-kv-item">
+                          <span>lamports</span>
+                          <strong>{statValue(account.lamports)}</strong>
+                        </div>
+                        <div className="clean-kv-item">
+                          <span>space</span>
+                          <strong>{statValue(account.space)}</strong>
+                        </div>
+                        <div className="clean-kv-item">
+                          <span>executable</span>
+                          <strong>
+                            {account.executable ? "true" : "false"}
+                          </strong>
+                        </div>
+                        <div className="clean-kv-item">
+                          <span>rentEpoch</span>
+                          <strong>{statValue(account.rentEpoch)}</strong>
+                        </div>
+                        <div className="clean-kv-item">
+                          <span>dataEncoding</span>
+                          <strong>{statValue(account.dataEncoding)}</strong>
+                        </div>
+                        <div className="clean-kv-item">
+                          <span>dataLength</span>
+                          <strong>{statValue(account.dataLength)}</strong>
+                        </div>
+                        <div className="clean-kv-item">
+                          <span>parsedType</span>
+                          <strong>{statValue(account.parsedType)}</strong>
+                        </div>
+                      </div>
+                    )}
+
+                    {account.parsedInfo && (
+                      <details className="detail-block read-log-block">
+                        <summary>Parsed info</summary>
+                        <pre>{JSON.stringify(account.parsedInfo, null, 2)}</pre>
+                      </details>
+                    )}
+
+                    {account.binaryDecoded && (
+                      <details open className="detail-block read-log-block">
+                        <summary>Decoded binary data</summary>
+                        <div className="clean-kv-list">
+                          <div className="clean-kv-item">
+                            <span>byteLength</span>
+                            <strong>{account.binaryDecoded.byteLength}</strong>
+                          </div>
+                          <div className="clean-kv-item">
+                            <span>anchorDiscriminator</span>
+                            <strong>
+                              {account.binaryDecoded.discriminator || "n/a"}
+                            </strong>
+                          </div>
+                        </div>
+
+                        {Array.isArray(account.binaryDecoded.fields) &&
+                          account.binaryDecoded.fields.length > 0 && (
+                            <div className="clean-kv-list">
+                              {account.binaryDecoded.fields.map((field) => (
+                                <div
+                                  key={`${account.pubkey}-${field.type}-${field.offset}`}
+                                  className="clean-kv-item"
+                                >
+                                  <span>
+                                    {field.label} @ {field.offset}
+                                  </span>
+                                  <strong>{field.value}</strong>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                        <pre>{account.binaryDecoded.hexPreview}</pre>
+                      </details>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
       </section>
     );
   }
@@ -391,6 +669,13 @@ export function TraceDetail({
           onClick={() => onChangeViewMode("json")}
         >
           JSON
+        </button>
+        <button
+          type="button"
+          className={`detail-mode-tab ${viewMode === "accounts" ? "active" : ""}`}
+          onClick={() => onChangeViewMode("accounts")}
+        >
+          Account Storage
         </button>
       </div>
 

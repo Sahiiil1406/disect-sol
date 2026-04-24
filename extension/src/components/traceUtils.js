@@ -589,6 +589,16 @@ export function summarizeTraceForCleanUi(trace) {
         accountCount: Array.isArray(instruction.accountKeys)
           ? instruction.accountKeys.length
           : 0,
+        dataLength:
+          typeof instruction.dataLength === "number"
+            ? instruction.dataLength
+            : null,
+        dataEncoding: instruction.dataEncoding || null,
+        dataPreviewHex: instruction.dataPreviewHex || "",
+        decoded:
+          instruction.decoded && typeof instruction.decoded === "object"
+            ? instruction.decoded
+            : null,
       }))
     : [];
 

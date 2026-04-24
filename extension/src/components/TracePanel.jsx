@@ -22,6 +22,232 @@ const SIGNATURE_METHOD_HINTS = [
   "getSignatureStatuses",
 ];
 
+function isLikelyAddress(value) {
+  return (
+    typeof value === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,88}$/.test(value)
+  );
+}
+
+function decodeBase64ToBytes(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  try {
+    const raw = atob(value);
+    return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+function bytesToHex(bytes, max = 64) {
+  if (!(bytes instanceof Uint8Array)) {
+    return "";
+  }
+
+  const out = [];
+  for (let i = 0; i < Math.min(bytes.length, max); i += 1) {
+    out.push(bytes[i].toString(16).padStart(2, "0"));
+  }
+
+  return out.join(" ");
+}
+
+function bytesToAsciiPreview(bytes, max = 96) {
+  if (!(bytes instanceof Uint8Array)) {
+    return "";
+  }
+
+  return Array.from(bytes.slice(0, max))
+    .map((byte) =>
+      byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : ".",
+    )
+    .join("");
+}
+
+function readU64LE(bytes, offset = 0) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < offset + 8) {
+    return null;
+  }
+
+  try {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return view.getBigUint64(offset, true);
+  } catch {
+    return null;
+  }
+}
+
+function readU32LE(bytes, offset = 0) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < offset + 4) {
+    return null;
+  }
+
+  return (
+    (bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24)) >>>
+    0
+  );
+}
+
+function parseBinaryAccountData(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+    return null;
+  }
+
+  const fields = [];
+  const discriminator =
+    bytes.length >= 8
+      ? bytesToHex(bytes.slice(0, 8), 8).replace(/ /g, "")
+      : null;
+
+  const bodyOffset = discriminator ? 8 : 0;
+  const body = bytes.slice(bodyOffset);
+
+  for (
+    let offset = 0;
+    offset + 8 <= body.length && fields.length < 8;
+    offset += 8
+  ) {
+    const value = readU64LE(body, offset);
+    if (value === null) {
+      continue;
+    }
+
+    const label =
+      offset === 0
+        ? "u64_0 (often counter/amount)"
+        : `u64_${Math.floor(offset / 8)}`;
+    fields.push({
+      type: "u64",
+      label,
+      offset: bodyOffset + offset,
+      value: value.toString(),
+    });
+  }
+
+  for (
+    let offset = 0;
+    offset + 4 <= body.length && fields.length < 12;
+    offset += 4
+  ) {
+    const value = readU32LE(body, offset);
+    if (value === null) {
+      continue;
+    }
+
+    fields.push({
+      type: "u32",
+      label: `u32_${Math.floor(offset / 4)}`,
+      offset: bodyOffset + offset,
+      value: String(value),
+    });
+  }
+
+  return {
+    byteLength: bytes.length,
+    discriminator,
+    hexPreview: bytesToHex(bytes, 64),
+    asciiPreview: bytesToAsciiPreview(bytes, 96),
+    fields,
+  };
+}
+
+function pickCandidateAccounts(selectedTrace, cleanSummary, txInsights) {
+  const unique = new Set();
+
+  const addAddress = (value) => {
+    if (typeof value === "string" && isLikelyAddress(value)) {
+      unique.add(value);
+    }
+  };
+
+  const detailsAccountKeys =
+    txInsights?.details?.transaction?.message?.accountKeys;
+  if (Array.isArray(detailsAccountKeys)) {
+    for (const key of detailsAccountKeys) {
+      if (typeof key === "string") {
+        addAddress(key);
+        continue;
+      }
+
+      if (key && typeof key === "object") {
+        addAddress(key.pubkey);
+      }
+    }
+  }
+
+  if (Array.isArray(cleanSummary?.accounts)) {
+    for (const account of cleanSummary.accounts) {
+      addAddress(account?.label);
+    }
+  }
+
+  const params = selectedTrace?.params;
+  if (Array.isArray(params)) {
+    for (const param of params.slice(0, 8)) {
+      addAddress(typeof param === "string" ? param : param?.pubkey);
+    }
+  }
+
+  return [...unique].slice(0, 20);
+}
+
+function summarizeFetchedAccount(pubkey, account) {
+  if (!account) {
+    return {
+      pubkey,
+      found: false,
+    };
+  }
+
+  const data = account?.data;
+  const parsed =
+    data && typeof data === "object" && !Array.isArray(data)
+      ? data.parsed
+      : null;
+
+  let dataEncoding = null;
+  let dataLength = null;
+  let rawBytes = null;
+  if (Array.isArray(data)) {
+    dataEncoding = typeof data[1] === "string" ? data[1] : "unknown";
+    if (typeof data[0] === "string") {
+      if (dataEncoding === "base64") {
+        rawBytes = decodeBase64ToBytes(data[0]);
+      }
+
+      dataLength = rawBytes?.length ?? data[0].length;
+    }
+  } else if (typeof data === "string") {
+    dataEncoding = "string";
+    rawBytes = decodeBase64ToBytes(data);
+    dataLength = rawBytes?.length ?? data.length;
+  } else if (parsed) {
+    dataEncoding = "jsonParsed";
+  }
+
+  const binaryDecoded = parseBinaryAccountData(rawBytes);
+
+  return {
+    pubkey,
+    found: true,
+    lamports: typeof account.lamports === "number" ? account.lamports : null,
+    owner: account.owner || null,
+    executable: Boolean(account.executable),
+    rentEpoch: account.rentEpoch ?? null,
+    space: typeof account.space === "number" ? account.space : null,
+    dataEncoding,
+    dataLength,
+    parsedType: parsed?.type || null,
+    parsedInfo: parsed?.info || null,
+    binaryDecoded,
+  };
+}
+
 function findRelatedSignature(trace, traces) {
   if (!trace || !Array.isArray(traces) || traces.length === 0) {
     return null;
@@ -53,7 +279,9 @@ function findRelatedSignature(trace, traces) {
 
   for (const candidate of nearby) {
     const method = String(candidate.method || "");
-    const hasHint = SIGNATURE_METHOD_HINTS.some((hint) => method.includes(hint));
+    const hasHint = SIGNATURE_METHOD_HINTS.some((hint) =>
+      method.includes(hint),
+    );
     if (!hasHint) {
       continue;
     }
@@ -90,6 +318,13 @@ export function TracePanel() {
     status: null,
     rawJson: null,
     endpointUsed: "",
+  });
+  const [accountStorageInsights, setAccountStorageInsights] = useState({
+    loading: false,
+    error: "",
+    endpointUsed: "",
+    accounts: [],
+    slot: null,
   });
 
   useEffect(() => {
@@ -214,8 +449,9 @@ export function TracePanel() {
       const cluster = detectClusterFromTrace(selectedTrace);
       const endpointTrace =
         signatureInfo?.source === "related-trace"
-          ? traces.find((trace) => trace.traceId === signatureInfo.sourceTraceId) ||
-            selectedTrace
+          ? traces.find(
+              (trace) => trace.traceId === signatureInfo.sourceTraceId,
+            ) || selectedTrace
           : selectedTrace;
       const endpointCandidates = getRpcEndpointsForTrace(endpointTrace);
 
@@ -369,6 +605,122 @@ export function TracePanel() {
     };
   }, [selectedTrace]);
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadAccountStorageInsights() {
+      if (!selectedTrace) {
+        setAccountStorageInsights({
+          loading: false,
+          error: "",
+          endpointUsed: "",
+          accounts: [],
+          slot: null,
+        });
+        return;
+      }
+
+      const candidateAccounts = pickCandidateAccounts(
+        selectedTrace,
+        cleanSummary,
+        txInsights,
+      );
+
+      if (candidateAccounts.length === 0) {
+        setAccountStorageInsights({
+          loading: false,
+          error: "No related accounts found for this transaction",
+          endpointUsed: "",
+          accounts: [],
+          slot: null,
+        });
+        return;
+      }
+
+      const endpointCandidates = getRpcEndpointsForTrace(selectedTrace);
+
+      setAccountStorageInsights((prev) => ({
+        ...prev,
+        loading: true,
+        error: "",
+        endpointUsed: endpointCandidates[0] || "",
+      }));
+
+      let lastError = "Unable to fetch account storage";
+
+      for (const endpoint of endpointCandidates) {
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: `sol-account-storage-${Date.now()}`,
+              method: "getMultipleAccounts",
+              params: [candidateAccounts, { encoding: "jsonParsed" }],
+            }),
+          });
+
+          if (!response.ok) {
+            lastError = `getMultipleAccounts failed: HTTP ${response.status}`;
+            continue;
+          }
+
+          const payload = await response.json();
+          const value = Array.isArray(payload?.result?.value)
+            ? payload.result.value
+            : null;
+
+          if (!value) {
+            lastError =
+              payload?.error?.message || "No account payload returned";
+            continue;
+          }
+
+          if (!active) {
+            return;
+          }
+
+          const accounts = candidateAccounts.map((pubkey, index) =>
+            summarizeFetchedAccount(pubkey, value[index]),
+          );
+
+          setAccountStorageInsights({
+            loading: false,
+            error: "",
+            endpointUsed: endpoint,
+            accounts,
+            slot: payload?.result?.context?.slot ?? null,
+          });
+          return;
+        } catch (fetchError) {
+          lastError =
+            fetchError instanceof Error
+              ? fetchError.message
+              : String(fetchError);
+        }
+      }
+
+      if (!active) {
+        return;
+      }
+
+      setAccountStorageInsights({
+        loading: false,
+        error: lastError,
+        endpointUsed: endpointCandidates[0] || "",
+        accounts: [],
+        slot: null,
+      });
+    }
+
+    loadAccountStorageInsights();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedTrace, cleanSummary, txInsights]);
+
   const counts = useMemo(() => {
     const read = events.filter((event) => event.kind === "READ").length;
     const write = events.filter((event) => event.kind === "WRITE").length;
@@ -444,6 +796,7 @@ export function TracePanel() {
             onChangeViewMode={setViewMode}
             cleanSummary={cleanSummary}
             txInsights={txInsights}
+            accountStorageInsights={accountStorageInsights}
           />
         </div>
       )}
