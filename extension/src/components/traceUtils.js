@@ -3,6 +3,7 @@ export function looksLikeBase64(value) {
     typeof value === "string" &&
     value.length >= 40 &&
     value.length % 4 === 0 &&
+    /[+/=]/.test(value) &&
     /^[A-Za-z0-9+/=]+$/.test(value)
   );
 }
@@ -253,7 +254,9 @@ export function extractSignatureFromTrace(trace) {
     return null;
   }
 
-  return findSignatureDeep(trace.result) || findSignatureDeep(trace.meta) || null;
+  return (
+    findSignatureDeep(trace.result) || findSignatureDeep(trace.meta) || null
+  );
 }
 
 export function detectClusterFromEndpoint(endpoint) {
@@ -292,7 +295,9 @@ export function detectClusterFromTrace(trace) {
     return "devnet";
   }
 
-  const requestParams = JSON.stringify(trace.meta?.requestParams || "").toLowerCase();
+  const requestParams = JSON.stringify(
+    trace.meta?.requestParams || "",
+  ).toLowerCase();
   if (requestParams.includes("devnet")) {
     return "devnet";
   }
@@ -372,9 +377,11 @@ export function buildTraces(events) {
     const existing = map.get(key) || {
       traceId: key,
       method: event.method || "unknown",
+      functionName: event.method || "unknown",
       kind: event.kind || "SYSTEM",
       endpoint: event.requestUrl || "",
       transport: event.transport || "",
+      callId: event.callId || "",
       startedAt: event.timestamp || event.at || Date.now(),
       durationMs: null,
       statusCode: null,
@@ -396,6 +403,8 @@ export function buildTraces(events) {
     });
     existing.kind = event.kind || existing.kind;
     existing.method = event.method || existing.method;
+    existing.functionName = event.method || existing.functionName;
+    existing.callId = event.callId || existing.callId;
     existing.endpoint = event.requestUrl || existing.endpoint;
     existing.transport = event.transport || existing.transport;
 
@@ -408,6 +417,21 @@ export function buildTraces(events) {
     if (event.phase === "BEFORE") {
       existing.startedAt = event.timestamp || event.at || existing.startedAt;
       existing.params = event.params ?? existing.params;
+    }
+
+    if (existing.params === undefined && event.params !== undefined) {
+      existing.params = event.params;
+    }
+
+    if (existing.params === undefined && event.requestParams !== undefined) {
+      existing.params = event.requestParams;
+    }
+
+    if (
+      existing.params === undefined &&
+      event.requestSummary?.decoded !== undefined
+    ) {
+      existing.params = event.requestSummary.decoded;
     }
 
     if (event.phase === "AFTER") {
@@ -436,14 +460,105 @@ export function buildTraces(events) {
 
 function summarizeAccount(account) {
   if (!account || typeof account !== "object") {
-    return { label: String(account || "Unknown"), signer: false, writable: false };
+    return {
+      label: String(account || "Unknown"),
+      signer: false,
+      writable: false,
+    };
   }
 
   return {
     label: toAddressLabel(account),
     signer: Boolean(firstDefined(account.isSigner, account.signer, false)),
-    writable: Boolean(firstDefined(account.isWritable, account.writable, false)),
+    writable: Boolean(
+      firstDefined(account.isWritable, account.writable, false),
+    ),
   };
+}
+
+function isLikelyAddress(value) {
+  return (
+    typeof value === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,88}$/.test(value)
+  );
+}
+
+function collectPublicKeys(value, output, depth = 0) {
+  if (depth > 5 || value === null || value === undefined) {
+    return;
+  }
+
+  if (typeof value === "string") {
+    if (isLikelyAddress(value)) {
+      output.add(value);
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectPublicKeys(entry, output, depth + 1);
+    }
+    return;
+  }
+
+  if (typeof value === "object") {
+    for (const nested of Object.values(value)) {
+      collectPublicKeys(nested, output, depth + 1);
+    }
+  }
+}
+
+function collectAssociatedParams(params) {
+  if (!params || typeof params !== "object") {
+    return [];
+  }
+
+  const output = [];
+  const entries = Object.entries(params).slice(0, 24);
+
+  for (const [key, raw] of entries) {
+    if (raw === null || raw === undefined) {
+      continue;
+    }
+
+    if (
+      typeof raw === "string" ||
+      typeof raw === "number" ||
+      typeof raw === "boolean"
+    ) {
+      output.push({ key, value: String(raw) });
+      continue;
+    }
+
+    if (Array.isArray(raw)) {
+      output.push({ key, value: `${raw.length} item(s)` });
+      continue;
+    }
+
+    if (typeof raw === "object") {
+      const nestedKeys = Object.keys(raw).slice(0, 4).join(", ");
+      output.push({
+        key,
+        value: nestedKeys ? `Object(${nestedKeys})` : "Object",
+      });
+    }
+  }
+
+  return output;
+}
+
+function collectAssociatedAccounts({ txPreview, requestSummary, params }) {
+  const unique = new Set();
+
+  collectPublicKeys(txPreview, unique);
+  collectPublicKeys(requestSummary, unique);
+  collectPublicKeys(params, unique);
+
+  return [...unique].slice(0, 40).map((label) => ({
+    label,
+    signer: false,
+    writable: false,
+  }));
 }
 
 export function summarizeTraceForCleanUi(trace) {
@@ -477,13 +592,29 @@ export function summarizeTraceForCleanUi(trace) {
       }))
     : [];
 
-  const accountCount = firstDefined(txPreview?.accountCount, accounts.length, null);
+  const associatedAccounts = collectAssociatedAccounts({
+    txPreview,
+    requestSummary,
+    params,
+  });
+
+  const accountCount = firstDefined(
+    txPreview?.accountCount,
+    accounts.length,
+    null,
+  );
   const methodName = String(trace.method || "").toLowerCase();
+  const cluster = detectClusterFromTrace(trace);
+  const rpcEndpoint = getRpcEndpointsForTrace(trace)[0] || "n/a";
+  const associatedParams = collectAssociatedParams(params);
 
   let caseTitle = "General call";
   if (methodName.includes("signmessage")) {
     caseTitle = "Message signing";
-  } else if (methodName.includes("connect") || methodName.includes("disconnect")) {
+  } else if (
+    methodName.includes("connect") ||
+    methodName.includes("disconnect")
+  ) {
     caseTitle = "Wallet connection";
   } else if (methodName.includes("sign") || methodName.includes("send")) {
     caseTitle = "Transaction action";
@@ -495,11 +626,14 @@ export function summarizeTraceForCleanUi(trace) {
     duration:
       typeof trace.durationMs === "number" ? `${trace.durationMs}ms` : "n/a",
     endpoint: trace.endpoint || "n/a",
+    cluster,
+    rpcEndpoint,
     signerCount: firstDefined(meta.signerCount, params.signerCount, null),
-    accountCount,
-    accounts,
+    accountCount: firstDefined(accountCount, associatedAccounts.length, null),
+    accounts: accounts.length > 0 ? accounts : associatedAccounts,
     instructions,
     requestSummary,
     importantParams: params,
+    associatedParams,
   };
 }

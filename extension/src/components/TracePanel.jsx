@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   buildTraces,
   buildExplorerLinks,
+  detectClusterFromTrace,
   deepDecode,
   extractSignatureFromTrace,
   getRpcEndpointsForTrace,
@@ -13,6 +14,65 @@ import { TraceDetail } from "./TraceDetail";
 
 const STORAGE_KEY = "rpcEvents";
 
+const SIGNATURE_METHOD_HINTS = [
+  "sendTransaction",
+  "signAndSendTransaction",
+  "sendAndConfirm",
+  "confirmTransaction",
+  "getSignatureStatuses",
+];
+
+function findRelatedSignature(trace, traces) {
+  if (!trace || !Array.isArray(traces) || traces.length === 0) {
+    return null;
+  }
+
+  const direct = extractSignatureFromTrace(trace);
+  if (direct) {
+    return {
+      signature: direct,
+      source: "current-trace",
+      sourceMethod: trace.method,
+      sourceTraceId: trace.traceId,
+      sourceEndpoint: trace.endpoint,
+    };
+  }
+
+  const baseTime = trace.startedAt || Date.now();
+  const nearby = traces
+    .filter((candidate) => candidate && candidate.traceId !== trace.traceId)
+    .filter((candidate) => {
+      const t = candidate.startedAt || 0;
+      return Math.abs(t - baseTime) <= 90_000;
+    })
+    .sort(
+      (a, b) =>
+        Math.abs((a.startedAt || 0) - baseTime) -
+        Math.abs((b.startedAt || 0) - baseTime),
+    );
+
+  for (const candidate of nearby) {
+    const method = String(candidate.method || "");
+    const hasHint = SIGNATURE_METHOD_HINTS.some((hint) => method.includes(hint));
+    if (!hasHint) {
+      continue;
+    }
+
+    const signature = extractSignatureFromTrace(candidate);
+    if (signature) {
+      return {
+        signature,
+        source: "related-trace",
+        sourceMethod: candidate.method,
+        sourceTraceId: candidate.traceId,
+        sourceEndpoint: candidate.endpoint,
+      };
+    }
+  }
+
+  return null;
+}
+
 export function TracePanel() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -23,8 +83,11 @@ export function TracePanel() {
     loading: false,
     error: "",
     signature: null,
+    signatureSource: "",
+    cluster: "unknown",
     explorerLinks: null,
     details: null,
+    status: null,
     rawJson: null,
     endpointUsed: "",
   });
@@ -134,59 +197,99 @@ export function TracePanel() {
           loading: false,
           error: "",
           signature: null,
+          signatureSource: "",
+          cluster: "unknown",
           explorerLinks: null,
           details: null,
+          status: null,
           rawJson: null,
           endpointUsed: "",
         });
         return;
       }
 
-      const signature = extractSignatureFromTrace(selectedTrace);
+      const signatureInfo = findRelatedSignature(selectedTrace, traces);
+      const signature = signatureInfo?.signature || null;
       const explorerLinks = buildExplorerLinks(signature, selectedTrace);
+      const cluster = detectClusterFromTrace(selectedTrace);
+      const endpointTrace =
+        signatureInfo?.source === "related-trace"
+          ? traces.find((trace) => trace.traceId === signatureInfo.sourceTraceId) ||
+            selectedTrace
+          : selectedTrace;
+      const endpointCandidates = getRpcEndpointsForTrace(endpointTrace);
 
       setTxInsights({
         loading: false,
         error: "",
         signature,
+        signatureSource:
+          signatureInfo?.source === "related-trace"
+            ? `Inferred from ${signatureInfo.sourceMethod}`
+            : "",
+        cluster,
         explorerLinks,
         details: null,
+        status: null,
         rawJson: null,
-        endpointUsed: "",
+        endpointUsed: endpointCandidates[0] || "",
       });
 
       if (!signature) {
+        setTxInsights((prev) => ({
+          ...prev,
+          error:
+            selectedTrace?.method === "connect"
+              ? "Wallet connect does not produce an on-chain transaction"
+              : selectedTrace?.method === "signTransaction"
+                ? "signTransaction signs locally. Run sendTransaction/signAndSendTransaction to get on-chain status"
+                : "No transaction signature found in this trace",
+        }));
         return;
       }
 
       setTxInsights((prev) => ({ ...prev, loading: true }));
 
-      const endpointCandidates = getRpcEndpointsForTrace(selectedTrace);
       let lastError = "Transaction details are not available yet.";
 
       for (const endpoint of endpointCandidates) {
         try {
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              id: `sol-trace-${Date.now()}`,
-              method: "getTransaction",
-              params: [
-                signature,
-                { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
-              ],
-            }),
-          });
+          const txParamAttempts = [
+            [
+              signature,
+              { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
+            ],
+            [signature, { encoding: "jsonParsed" }],
+            [signature, { encoding: "json" }],
+          ];
 
-          if (!response.ok) {
-            lastError = `getTransaction failed: HTTP ${response.status}`;
-            continue;
+          let details = null;
+          let detailsPayload = null;
+
+          for (const params of txParamAttempts) {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: `sol-trace-${Date.now()}`,
+                method: "getTransaction",
+                params,
+              }),
+            });
+
+            if (!response.ok) {
+              lastError = `getTransaction failed: HTTP ${response.status}`;
+              continue;
+            }
+
+            const payload = await response.json();
+            if (payload?.result) {
+              details = payload.result;
+              detailsPayload = payload;
+              break;
+            }
           }
-
-          const payload = await response.json();
-          const details = payload?.result || null;
 
           if (!active) {
             return;
@@ -197,17 +300,52 @@ export function TracePanel() {
               ...prev,
               loading: false,
               details,
-              rawJson: payload,
+              status: {
+                confirmationStatus: details?.meta?.err ? "failed" : "confirmed",
+                err: details?.meta?.err || null,
+              },
+              rawJson: detailsPayload,
               endpointUsed: endpoint,
               error: "",
             }));
             return;
           }
 
-          lastError = `No transaction found on ${endpoint}`;
+          const statusResponse = await fetch(endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: `sol-trace-status-${Date.now()}`,
+              method: "getSignatureStatuses",
+              params: [[signature], { searchTransactionHistory: true }],
+            }),
+          });
+
+          if (statusResponse.ok) {
+            const statusPayload = await statusResponse.json();
+            const status = statusPayload?.result?.value?.[0] || null;
+            if (status && active) {
+              setTxInsights((prev) => ({
+                ...prev,
+                loading: false,
+                status,
+                rawJson: statusPayload,
+                endpointUsed: endpoint,
+                error: status.err
+                  ? "Transaction found with on-chain error"
+                  : "Transaction confirmed; detailed payload not yet available",
+              }));
+              return;
+            }
+          }
+
+          lastError = `No transaction details found on ${endpoint}`;
         } catch (fetchError) {
           lastError =
-            fetchError instanceof Error ? fetchError.message : String(fetchError);
+            fetchError instanceof Error
+              ? fetchError.message
+              : String(fetchError);
         }
       }
 
@@ -219,6 +357,7 @@ export function TracePanel() {
         ...prev,
         loading: false,
         details: null,
+        status: null,
         rawJson: null,
         error: lastError,
       }));

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { formatLamports, shortenAddress } from "./traceUtils";
 
 function statValue(value) {
@@ -32,6 +32,80 @@ function flattenImportantParams(value) {
   }));
 }
 
+function buildMinimalParameterList(trace, cleanSummary, paramSummary) {
+  const txPreview = trace?.meta?.txPreview || null;
+  const list = [];
+
+  if (txPreview && typeof txPreview === "object") {
+    if (txPreview.feePayer) {
+      list.push({ key: "feePayer", value: String(txPreview.feePayer) });
+    }
+
+    if (txPreview.recentBlockhash) {
+      list.push({
+        key: "recentBlockhash",
+        value: String(txPreview.recentBlockhash),
+      });
+    }
+
+    if (typeof txPreview.instructionCount === "number") {
+      list.push({
+        key: "instructionCount",
+        value: String(txPreview.instructionCount),
+      });
+    }
+
+    if (typeof txPreview.accountCount === "number") {
+      list.push({ key: "accountCount", value: String(txPreview.accountCount) });
+    }
+
+    if (
+      Array.isArray(txPreview.instructions) &&
+      txPreview.instructions.length > 0
+    ) {
+      const programIds = [
+        ...new Set(
+          txPreview.instructions
+            .map((instruction) => instruction?.programId)
+            .filter(Boolean),
+        ),
+      ];
+      if (programIds.length > 0) {
+        list.push({ key: "programIds", value: programIds.join(", ") });
+      }
+
+      const totalIxData = txPreview.instructions.reduce(
+        (sum, instruction) =>
+          sum +
+          (typeof instruction?.dataLength === "number"
+            ? instruction.dataLength
+            : 0),
+        0,
+      );
+      if (totalIxData > 0) {
+        list.push({ key: "instructionDataBytes", value: String(totalIxData) });
+      }
+    }
+  }
+
+  if (list.length > 0) {
+    return list;
+  }
+
+  if (
+    Array.isArray(cleanSummary?.associatedParams) &&
+    cleanSummary.associatedParams.length > 0
+  ) {
+    return cleanSummary.associatedParams.slice(0, 12);
+  }
+
+  if (paramSummary && typeof paramSummary === "object") {
+    return flattenImportantParams(paramSummary).slice(0, 12);
+  }
+
+  return [];
+}
+
 export function TraceDetail({
   trace,
   paramSummary,
@@ -41,36 +115,58 @@ export function TraceDetail({
   cleanSummary,
   txInsights,
 }) {
-  const [jsonPane, setJsonPane] = useState("trace");
-
   const metrics = useMemo(() => {
     const details = txInsights?.details;
+    const statusValue = txInsights?.status;
+    const traceResult = trace?.result;
+    const feeLamports =
+      details?.meta?.fee ?? traceResult?.meta?.fee ?? traceResult?.value?.fee;
+    const computeUnits =
+      details?.meta?.computeUnitsConsumed ??
+      traceResult?.meta?.computeUnitsConsumed ??
+      traceResult?.value?.unitsConsumed;
+
     return {
       status: trace?.error
         ? "Failed"
-        : details?.meta?.err
+        : statusValue?.err
           ? "Failed"
-          : details
-            ? "Confirmed"
-            : "Pending",
-      fee: typeof details?.meta?.fee === "number" ? formatLamports(details.meta.fee) : "n/a",
+          : statusValue?.confirmationStatus
+            ? String(statusValue.confirmationStatus)
+            : details?.meta?.err
+              ? "Failed"
+              : details
+                ? "Confirmed"
+                : "Pending",
+      fee:
+        typeof feeLamports === "number"
+          ? formatLamports(feeLamports)
+          : "n/a",
       compute:
-        typeof details?.meta?.computeUnitsConsumed === "number"
-          ? `${details.meta.computeUnitsConsumed} CU`
+        typeof computeUnits === "number"
+          ? `${computeUnits} CU`
           : "n/a",
       slot: statValue(details?.slot),
-      instructionCount:
-        statValue(
-          details?.transaction?.message?.instructions?.length ??
-            cleanSummary?.instructions?.length,
-        ),
-      accountCount:
-        statValue(
-          details?.transaction?.message?.accountKeys?.length ?? cleanSummary?.accountCount,
-        ),
+      instructionCount: statValue(
+        details?.transaction?.message?.instructions?.length ??
+          cleanSummary?.instructions?.length,
+      ),
+      accountCount: statValue(
+        details?.transaction?.message?.accountKeys?.length ??
+          cleanSummary?.accountCount,
+      ),
       signature: txInsights?.signature || "",
-      cluster: txInsights?.explorerLinks?.cluster || "unknown",
-      endpointUsed: txInsights?.endpointUsed || trace?.endpoint || "n/a",
+      signatureSource: txInsights?.signatureSource || "",
+      cluster:
+        txInsights?.explorerLinks?.cluster ||
+        txInsights?.cluster ||
+        cleanSummary?.cluster ||
+        "unknown",
+      endpointUsed:
+        txInsights?.endpointUsed ||
+        cleanSummary?.rpcEndpoint ||
+        trace?.endpoint ||
+        "n/a",
     };
   }, [trace, cleanSummary, txInsights]);
 
@@ -83,11 +179,19 @@ export function TraceDetail({
   }
 
   if (viewMode === "clean") {
-    const importantParams = flattenImportantParams(cleanSummary?.importantParams || paramSummary);
+    const importantParams = buildMinimalParameterList(
+      trace,
+      cleanSummary,
+      paramSummary,
+    );
 
     return (
       <section className="detail-panel">
-        <div className="detail-mode-tabs" role="tablist" aria-label="Detail mode">
+        <div
+          className="detail-mode-tabs"
+          role="tablist"
+          aria-label="Detail mode"
+        >
           <button
             type="button"
             className={`detail-mode-tab ${viewMode === "clean" ? "active" : ""}`}
@@ -106,7 +210,12 @@ export function TraceDetail({
 
         <div className="clean-hero">
           <h2>{cleanSummary?.title || trace.method}</h2>
-          <p className="clean-subtitle">{cleanSummary?.caseTitle || "Transaction details"}</p>
+          <p className="clean-subtitle">
+            {cleanSummary?.caseTitle || "Transaction details"}
+          </p>
+          <p className="meta">
+            Function: {trace?.functionName || trace?.method || "unknown"}
+          </p>
         </div>
 
         <div className="clean-metric-grid">
@@ -120,7 +229,9 @@ export function TraceDetail({
           </article>
           <article className="clean-metric-card">
             <span>Network</span>
-            <strong>{metrics.cluster}</strong>
+            <strong>
+              {metrics.cluster || cleanSummary?.cluster || "unknown"}
+            </strong>
           </article>
           <article className="clean-metric-card">
             <span>Fee</span>
@@ -134,20 +245,50 @@ export function TraceDetail({
             <span>Instructions</span>
             <strong>{metrics.instructionCount}</strong>
           </article>
+          <article className="clean-metric-card">
+            <span>Accounts</span>
+            <strong>{metrics.accountCount}</strong>
+          </article>
+          <article className="clean-metric-card">
+            <span>RPC</span>
+            <strong>{metrics.endpointUsed}</strong>
+          </article>
+          <article className="clean-metric-card">
+            <span>Call ID</span>
+            <strong>{trace?.callId || "n/a"}</strong>
+          </article>
         </div>
 
         {(txInsights?.signature || txInsights?.explorerLinks) && (
           <section className="clean-section">
             <h3>Transaction</h3>
-            <p className="meta">Signature: {txInsights?.signature ? shortenAddress(txInsights.signature) : "n/a"}</p>
+            <p className="meta">
+              Signature:{" "}
+              {txInsights?.signature
+                ? shortenAddress(txInsights.signature)
+                : "n/a"}
+            </p>
+            {metrics.signatureSource && (
+              <p className="meta">Source: {metrics.signatureSource}</p>
+            )}
             <div className="clean-link-row">
               {txInsights?.explorerLinks?.explorer && (
-                <a className="explorer-link" href={txInsights.explorerLinks.explorer} target="_blank" rel="noreferrer">
+                <a
+                  className="explorer-link"
+                  href={txInsights.explorerLinks.explorer}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   Solana Explorer
                 </a>
               )}
               {txInsights?.explorerLinks?.solscan && (
-                <a className="explorer-link" href={txInsights.explorerLinks.solscan} target="_blank" rel="noreferrer">
+                <a
+                  className="explorer-link"
+                  href={txInsights.explorerLinks.solscan}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   Solscan
                 </a>
               )}
@@ -157,7 +298,7 @@ export function TraceDetail({
 
         {importantParams.length > 0 && (
           <section className="clean-section">
-            <h3>Important parameters</h3>
+            <h3>Parameter list</h3>
             <div className="clean-kv-list">
               {importantParams.map((item) => (
                 <div key={item.key} className="clean-kv-item">
@@ -169,37 +310,70 @@ export function TraceDetail({
           </section>
         )}
 
-        {Array.isArray(cleanSummary?.accounts) && cleanSummary.accounts.length > 0 && (
-          <section className="clean-section">
-            <h3>Accounts involved</h3>
-            <div className="clean-chip-list">
-              {firstItems(cleanSummary.accounts, 12).map((account, index) => (
-                <span key={`${account.label}-${index}`} className="clean-chip">
-                  {shortenAddress(account.label)}
-                  {account.signer ? " • signer" : ""}
-                </span>
-              ))}
-            </div>
-          </section>
-        )}
+        {Array.isArray(cleanSummary?.accounts) &&
+          cleanSummary.accounts.length > 0 && (
+            <section className="clean-section">
+              <h3>Associated accounts</h3>
+              <div className="clean-chip-list">
+                {firstItems(cleanSummary.accounts, 12).map((account, index) => (
+                  <span
+                    key={`${account.label}-${index}`}
+                    className="clean-chip"
+                  >
+                    {shortenAddress(account.label)}
+                    {account.signer ? " • signer" : ""}
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
 
-        {txInsights?.loading && <p className="meta">Fetching on-chain details...</p>}
-        {txInsights?.error && <p className="meta error">{txInsights.error}</p>}
+        {txInsights?.loading && (
+          <p className="meta">Fetching on-chain details...</p>
+        )}
+        {txInsights?.error && (
+          <p
+            className={`meta ${
+              /No transaction signature|does not produce an on-chain transaction/i.test(
+                txInsights.error,
+              )
+                ? ""
+                : "error"
+            }`}
+          >
+            {txInsights.error}
+          </p>
+        )}
       </section>
     );
   }
 
-  const explorerJson =
-    txInsights?.rawJson ||
-    (txInsights?.details
-      ? {
-          result: txInsights.details,
-          endpointUsed: txInsights.endpointUsed,
-        }
-      : {
-          error: txInsights?.error || "Explorer details unavailable",
-          endpointUsed: txInsights?.endpointUsed || "n/a",
-        });
+  const traceJson = {
+    functionName: trace?.functionName || trace?.method || "unknown",
+    callId: trace?.callId || "n/a",
+    method: trace?.method,
+    kind: trace?.kind,
+    durationMs: trace?.durationMs,
+    params: paramSummary,
+    result: trace?.result,
+    error: trace?.error || null,
+    meta: traceMeta,
+  };
+
+  const explorerJson = txInsights?.rawJson || {
+    result: txInsights?.details || null,
+    status: txInsights?.status || null,
+    endpointUsed: txInsights?.endpointUsed || "n/a",
+    error: txInsights?.error || "Explorer details unavailable",
+  };
+
+  const decodedParamsJson = {
+    txPreview: trace?.meta?.txPreview || null,
+    requestMethod: trace?.meta?.requestMethod || null,
+    requestParams: trace?.meta?.requestParams || null,
+    requestSummary: trace?.meta?.requestSummary || null,
+    params: trace?.params ?? paramSummary,
+  };
 
   return (
     <section className="detail-panel">
@@ -220,57 +394,27 @@ export function TraceDetail({
         </button>
       </div>
 
-      <div className="detail-mode-tabs" role="tablist" aria-label="JSON source">
-        <button
-          type="button"
-          className={`detail-mode-tab ${jsonPane === "trace" ? "active" : ""}`}
-          onClick={() => setJsonPane("trace")}
-        >
-          Trace JSON
-        </button>
-        <button
-          type="button"
-          className={`detail-mode-tab ${jsonPane === "explorer" ? "active" : ""}`}
-          onClick={() => setJsonPane("explorer")}
-        >
-          Explorer JSON
-        </button>
+      <h2>{trace.functionName || trace.method}</h2>
+      <div className="summary-grid">
+        <p className="meta">Kind: {trace.kind}</p>
+        <p className="meta">Transport: {trace.transport || "n/a"}</p>
+        <p className="meta">Time: {trace.durationMs ?? "n/a"}ms</p>
       </div>
 
-      {jsonPane === "trace" && (
-        <>
-          <h2>{trace.method}</h2>
-          <div className="summary-grid">
-            <p className="meta">Kind: {trace.kind}</p>
-            <p className="meta">Transport: {trace.transport || "n/a"}</p>
-            <p className="meta">Time: {trace.durationMs ?? "n/a"}ms</p>
-          </div>
+      <details open className="detail-block">
+        <summary>Trace JSON</summary>
+        <pre>{JSON.stringify(traceJson, null, 2)}</pre>
+      </details>
 
-          {Object.keys(trace.meta || {}).length > 0 && (
-            <details open className="detail-block">
-              <summary>Function metadata</summary>
-              <pre>{JSON.stringify(traceMeta, null, 2)}</pre>
-            </details>
-          )}
+      <details open className="detail-block">
+        <summary>Explorer JSON</summary>
+        <pre>{JSON.stringify(explorerJson, null, 2)}</pre>
+      </details>
 
-          <details open className="detail-block">
-            <summary>Request params (decoded)</summary>
-            <pre>{JSON.stringify(paramSummary, null, 2)}</pre>
-          </details>
-
-          <details className="detail-block">
-            <summary>Raw response</summary>
-            <pre>{JSON.stringify(trace.result, null, 2)}</pre>
-          </details>
-        </>
-      )}
-
-      {jsonPane === "explorer" && (
-        <details open className="detail-block">
-          <summary>Explorer transaction payload</summary>
-          <pre>{JSON.stringify(explorerJson, null, 2)}</pre>
-        </details>
-      )}
+      <details open className="detail-block">
+        <summary>Decoded Parameters JSON</summary>
+        <pre>{JSON.stringify(decodedParamsJson, null, 2)}</pre>
+      </details>
 
       {trace.error && (
         <details open className="detail-block">
