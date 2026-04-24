@@ -1,0 +1,1 @@
+import"./modulepreload-polyfill.js";chrome.devtools.panels.create(`Solana Trace`,``,`panel.html`,()=>{});

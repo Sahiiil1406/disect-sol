@@ -9,9 +9,12 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        popup: resolve(__dirname, "extension/popup.html"),
+        devtools: resolve(__dirname, "extension/devtools.html"),
+        panel: resolve(__dirname, "extension/panel.html"),
+        sidepanel: resolve(__dirname, "extension/sidepanel.html"),
         background: resolve(__dirname, "extension/src/background.js"),
         content: resolve(__dirname, "extension/src/content.js"),
+        inpage: resolve(__dirname, "extension/src/inpage.js"),
       },
       output: {
         entryFileNames: "assets/[name].js",
