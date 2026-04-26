@@ -1,4 +1,5 @@
 # ChronoTrace Solana
+
 ChronoTrace Solana is the missing observability layer for Solana dApp teams.
 
 Today, developers still debug one transaction across wallet popups, RPC payloads, explorer tabs, and raw logs. That fragmented workflow kills iteration speed and hides root causes. ChronoTrace turns it into one deterministic flow: capture, decode, inspect, explain.
@@ -17,8 +18,6 @@ When a transaction fails, developers still ask basic questions manually:
 
 ChronoTrace Solana answers these instantly in one place, during development, in DevTools context.
 
-ChronoTrace Solana is not just a dashboard. It is developer infrastructure.
-
 If Solana wants faster shipping cycles, fewer silent failures, and better UX in production dApps, this visibility layer is mandatory. We are building the equivalent of APM for on-chain transaction execution.
 
 <img width="1535" height="727" alt="ChronoTrace panel" src="https://github.com/user-attachments/assets/f356f400-c56d-40e3-988b-3e6b84dab3ae" />
@@ -30,12 +29,20 @@ If Solana wants faster shipping cycles, fewer silent failures, and better UX in 
   - Captures request and response payloads immediately
 
 - Multi-method wallet and RPC coverage
-  - Tracks send/sign/signMessage/simulate flows, plus common read/write RPC calls
+  - Tracks send/sign/signMessage/simulate flows plus common read/write RPC calls
   - Preserves method-specific context so each trace stays semantically accurate
+
+- Mock simulation / real simulation trigger visibility
+  - Differentiates real chain simulation paths from mocked/local simulation flows
+  - Captures trigger source and request shape to speed up reproduce-and-fix loops
 
 - Instruction and parameter decoding
   - Shows method-level and instruction-level intent
   - Decodes common Solana programs (System, SPL Token, Token-2022, ATA, Compute Budget, Memo) plus Anchor hints
+
+- Instruction tree view
+  - Displays nested instructions/CPI hierarchy with parent-child relationships
+  - Helps identify where a deep instruction path failed inside complex transactions
 
 - Raw payload and decoded view side-by-side
   - Keeps original payloads for low-level verification
@@ -44,7 +51,6 @@ If Solana wants faster shipping cycles, fewer silent failures, and better UX in 
 - Account interaction visibility
   - Lists touched accounts with signer/writable/program roles
   - Identifies fee payer and account role in transaction context
-  - Pulls account context/state for deeper debugging
   - Surfaces metadata like executable flag, owner program, lamports, rent epoch, and data size
 
 - Account storage inspection
@@ -82,15 +88,6 @@ If Solana wants faster shipping cycles, fewer silent failures, and better UX in 
 
 - Explorer deep-link verification
   - One-click compare between local decoded context and on-chain explorer view
-
-## What Is Already Implemented
-
-- In-page interception bridge for send/sign/simulate and RPC methods
-- Event transport and persistence through content/background scripts
-- Trace grouping and enrichment pipeline for signatures, status, and metadata
-- Decoded instruction rendering in the panel UI
-- Account storage inspection with raw-byte heuristics and per-account metadata (fee payer/executable/owner/lamports)
-- Lifecycle timeline and stage cards in the inspector
 
 ## Architecture (High Level)
 
@@ -140,28 +137,3 @@ If Solana wants faster shipping cycles, fewer silent failures, and better UX in 
 5. Explain
    - UI presents a deterministic flow: request -> chain progress -> outcome.
    - Developers can answer root-cause questions without jumping across multiple tools.
-
-## Design Principles
-
-- Capture first, decode second
-  - Never lose the raw event; interpretation can evolve later.
-
-- Preserve causality
-  - Every derived insight maps back to an original call/event in the trace.
-
-- Fast path for triage, deep path for forensics
-  - One glance should show status; one click should expose raw details.
-
-## Impact
-
-- Faster debugging loops for Solana teams
-- Lower cost of transaction failure triage
-- Better release confidence before mainnet pushes
-- Better DX translates into better end-user reliability
-
-## Roadmap
-
-- Richer CPI and nested instruction tree visualization
-- Stronger program-specific error dictionaries
-- Transaction replay helpers from captured payloads
-- Team-shareable trace sessions and comparisons
