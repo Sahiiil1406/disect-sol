@@ -22,6 +22,21 @@ const SIGNATURE_METHOD_HINTS = [
   "getSignatureStatuses",
 ];
 
+const ON_CHAIN_METHOD_HINTS = [
+  "sendtransaction",
+  "signandsendtransaction",
+  "sendandconfirm",
+  "sendrawtransaction",
+];
+
+function isLikelyOnChainMethod(trace) {
+  const method = String(trace?.method || "").toLowerCase();
+  const requestMethod = String(trace?.meta?.requestMethod || "").toLowerCase();
+  return ON_CHAIN_METHOD_HINTS.some(
+    (hint) => method.includes(hint) || requestMethod.includes(hint),
+  );
+}
+
 function isLikelyAddress(value) {
   return (
     typeof value === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,88}$/.test(value)
@@ -306,18 +321,25 @@ export function TracePanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedTraceId, setSelectedTraceId] = useState("");
-  const [viewMode, setViewMode] = useState("clean");
+  const [viewMode, setViewMode] = useState("timeline");
   const [txInsights, setTxInsights] = useState({
     loading: false,
     error: "",
     signature: null,
     signatureSource: "",
+    signatureSourceType: "",
     cluster: "unknown",
     explorerLinks: null,
     details: null,
     status: null,
     rawJson: null,
     endpointUsed: "",
+    phaseTimestamps: {
+      lookupStartedAt: null,
+      pendingObservedAt: null,
+      confirmedObservedAt: null,
+      explorerAvailableAt: null,
+    },
   });
   const [accountStorageInsights, setAccountStorageInsights] = useState({
     loading: false,
@@ -433,12 +455,19 @@ export function TracePanel() {
           error: "",
           signature: null,
           signatureSource: "",
+          signatureSourceType: "",
           cluster: "unknown",
           explorerLinks: null,
           details: null,
           status: null,
           rawJson: null,
           endpointUsed: "",
+          phaseTimestamps: {
+            lookupStartedAt: null,
+            pendingObservedAt: null,
+            confirmedObservedAt: null,
+            explorerAvailableAt: null,
+          },
         });
         return;
       }
@@ -463,12 +492,19 @@ export function TracePanel() {
           signatureInfo?.source === "related-trace"
             ? `Inferred from ${signatureInfo.sourceMethod}`
             : "",
+        signatureSourceType: signatureInfo?.source || "",
         cluster,
         explorerLinks,
         details: null,
         status: null,
         rawJson: null,
         endpointUsed: endpointCandidates[0] || "",
+        phaseTimestamps: {
+          lookupStartedAt: null,
+          pendingObservedAt: null,
+          confirmedObservedAt: null,
+          explorerAvailableAt: null,
+        },
       });
 
       if (!signature) {
@@ -484,7 +520,14 @@ export function TracePanel() {
         return;
       }
 
-      setTxInsights((prev) => ({ ...prev, loading: true }));
+      setTxInsights((prev) => ({
+        ...prev,
+        loading: true,
+        phaseTimestamps: {
+          ...prev.phaseTimestamps,
+          lookupStartedAt: Date.now(),
+        },
+      }));
 
       let lastError = "Transaction details are not available yet.";
 
@@ -532,6 +575,7 @@ export function TracePanel() {
           }
 
           if (details) {
+            const nowTs = Date.now();
             setTxInsights((prev) => ({
               ...prev,
               loading: false,
@@ -543,6 +587,15 @@ export function TracePanel() {
               rawJson: detailsPayload,
               endpointUsed: endpoint,
               error: "",
+              phaseTimestamps: {
+                ...prev.phaseTimestamps,
+                pendingObservedAt:
+                  prev.phaseTimestamps?.pendingObservedAt ||
+                  prev.phaseTimestamps?.lookupStartedAt ||
+                  nowTs,
+                confirmedObservedAt:
+                  prev.phaseTimestamps?.confirmedObservedAt || nowTs,
+              },
             }));
             return;
           }
@@ -562,15 +615,41 @@ export function TracePanel() {
             const statusPayload = await statusResponse.json();
             const status = statusPayload?.result?.value?.[0] || null;
             if (status && active) {
+              const nowTs = Date.now();
+              const confirmationStatus = String(
+                status.confirmationStatus || "",
+              ).toLowerCase();
+              const isConfirmedLike =
+                confirmationStatus === "confirmed" ||
+                confirmationStatus === "finalized";
+              const isFinalized = confirmationStatus === "finalized";
+              const nextError = status.err
+                ? "Transaction found with on-chain error"
+                : isConfirmedLike
+                  ? "Transaction confirmed; detailed payload not yet available"
+                  : "Transaction pending in RPC status";
+
               setTxInsights((prev) => ({
                 ...prev,
                 loading: false,
                 status,
                 rawJson: statusPayload,
                 endpointUsed: endpoint,
-                error: status.err
-                  ? "Transaction found with on-chain error"
-                  : "Transaction confirmed; detailed payload not yet available",
+                error: nextError,
+                phaseTimestamps: {
+                  ...prev.phaseTimestamps,
+                  pendingObservedAt: !isConfirmedLike
+                    ? prev.phaseTimestamps?.pendingObservedAt || nowTs
+                    : prev.phaseTimestamps?.pendingObservedAt ||
+                      prev.phaseTimestamps?.lookupStartedAt ||
+                      nowTs,
+                  confirmedObservedAt: isConfirmedLike
+                    ? prev.phaseTimestamps?.confirmedObservedAt || nowTs
+                    : prev.phaseTimestamps?.confirmedObservedAt || null,
+                  explorerAvailableAt: isFinalized
+                    ? prev.phaseTimestamps?.explorerAvailableAt || nowTs
+                    : prev.phaseTimestamps?.explorerAvailableAt || null,
+                },
               }));
               return;
             }
@@ -727,6 +806,11 @@ export function TracePanel() {
     return { read, write };
   }, [events]);
 
+  const showTopTimeline = useMemo(
+    () => Boolean(selectedTrace && isLikelyOnChainMethod(selectedTrace)),
+    [selectedTrace],
+  );
+
   const handleClear = () => {
     chrome.runtime.sendMessage({ type: "CLEAR_RPC_EVENTS" });
   };
@@ -746,7 +830,7 @@ export function TracePanel() {
         Chrome DevTools-like function call list and dissection view
       </p>
 
-      {selectedTrace && (
+      {showTopTimeline && selectedTrace && (
         <div className="timeline-strip">
           {selectedTrace.timeline.map((step, index) => (
             <div
