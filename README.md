@@ -1,9 +1,4 @@
 # ChronoTrace Solana
-
-## Tagline
-
-Solana needed a DevTools moment. ChronoTrace is that moment.
-
 ChronoTrace Solana is the missing observability layer for Solana dApp teams.
 
 Today, developers still debug one transaction across wallet popups, RPC payloads, explorer tabs, and raw logs. That fragmented workflow kills iteration speed and hides root causes. ChronoTrace turns it into one deterministic flow: capture, decode, inspect, explain.
