@@ -647,3 +647,104 @@ export function summarizeTraceForCleanUi(trace) {
     associatedParams,
   };
 }
+
+/**
+ * Determines the account type based on owner and properties
+ */
+export function getAccountType(account) {
+  if (!account) return "Unknown";
+
+  if (account.executable) {
+    return "Program";
+  }
+
+  const owner = account.owner || "";
+  const tokenProgramId = "TokenkegQfeZyiNwAJsyFbPVwwQQfjasJjwNbUgZ6f";
+  const token2022ProgramId = "TokenzQdBbjWhAw8YYX3VnYU67oV27OMwTKTqHdBr";
+  const associatedTokenProgramId =
+    "ATokenGPvbdGVqstVQmcLsNZAqeEctipwTYj72v4SuLg";
+  const splAssocTokenProgram = "TokenkegQfeZyiNwAJsyFbPVwwQQfjasPHgKnFXYkJ";
+
+  if (owner === tokenProgramId || owner === token2022ProgramId) {
+    return "Token Account";
+  }
+
+  if (owner === associatedTokenProgramId || owner === splAssocTokenProgram) {
+    return "Associated Token";
+  }
+
+  if (account.parsedType === "mint") {
+    return "Token Mint";
+  }
+
+  if (account.parsedType === "account") {
+    return "Token Account";
+  }
+
+  return "Account";
+}
+
+/**
+ * Format address with ellipsis and option to copy
+ */
+export function formatAddressForDisplay(address) {
+  if (!address || typeof address !== "string") return "n/a";
+  if (address.length <= 20) return address;
+  return {
+    full: address,
+    short: `${address.slice(0, 4)}...${address.slice(-4)}`,
+    start: address.slice(0, 8),
+    end: address.slice(-8),
+  };
+}
+
+/**
+ * Get account status badges
+ */
+export function getAccountBadges(account) {
+  const badges = [];
+
+  if (account.executable) {
+    badges.push({ type: "executable", label: "Program" });
+  }
+
+  if (account.owner === "11111111111111111111111111111111") {
+    badges.push({ type: "system", label: "System" });
+  }
+
+  const owner = account.owner || "";
+  const tokenPrograms = [
+    "TokenkegQfeZyiNwAJsyFbPVwwQQfjasPHgKnFXYkJ",
+    "TokenzQdBbjWhAw8YYX3VnYU67oV27OMwTKTqHdBr",
+  ];
+
+  if (tokenPrograms.some((p) => owner === p)) {
+    badges.push({ type: "token", label: "Token" });
+  }
+
+  if (account.space && account.space > 0) {
+    badges.push({ type: "storage", label: `${account.space}B storage` });
+  }
+
+  return badges;
+}
+
+/**
+ * Format account lamports to SOL with better readability
+ */
+export function formatSol(lamports) {
+  if (typeof lamports !== "number") return "0 SOL";
+  const sol = lamports / 1_000_000_000;
+  if (sol === 0) return "0 SOL";
+  return `${sol.toFixed(4)} SOL`;
+}
+
+/**
+ * Calculate total lamports from accounts
+ */
+export function calculateTotalLamports(accounts) {
+  if (!Array.isArray(accounts)) return 0;
+  return accounts.reduce((sum, acc) => {
+    return sum + (typeof acc.lamports === "number" ? acc.lamports : 0);
+  }, 0);
+}

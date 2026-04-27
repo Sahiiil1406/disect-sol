@@ -1,8 +1,37 @@
 import { useMemo, useState } from "react";
-import { formatLamports, shortenAddress } from "./traceUtils";
+import {
+  formatLamports,
+  shortenAddress,
+  getAccountType,
+  getAccountBadges,
+  formatSol,
+  calculateTotalLamports,
+  formatAddressForDisplay,
+} from "./traceUtils";
 
 function statValue(value) {
   return value === undefined || value === null || value === "" ? "n/a" : value;
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text);
+  }
+}
+
+function renderAccountAddress(address) {
+  return (
+    <div className="account-address">
+      <code
+        className="address-link"
+        title={address}
+        onClick={() => copyToClipboard(address)}
+      >
+        {shortenAddress(address)}
+      </code>
+      <span className="copy-hint">(click to copy)</span>
+    </div>
+  );
 }
 
 function firstItems(value, max = 8) {
@@ -1254,98 +1283,174 @@ export function TraceDetail({
         {Array.isArray(accountStorageInsights?.accounts) &&
           accountStorageInsights.accounts.length > 0 && (
             <section className="clean-section">
+              <div className="accounts-summary">
+                <div className="summary-stat">
+                  <span className="stat-label">Total Accounts</span>
+                  <span className="stat-value">
+                    {accountStorageInsights.accounts.length}
+                  </span>
+                </div>
+                <div className="summary-stat">
+                  <span className="stat-label">Total Balance</span>
+                  <span className="stat-value">
+                    {formatSol(
+                      calculateTotalLamports(accountStorageInsights.accounts),
+                    )}
+                  </span>
+                </div>
+                <div className="summary-stat">
+                  <span className="stat-label">Programs</span>
+                  <span className="stat-value">
+                    {
+                      accountStorageInsights.accounts.filter(
+                        (a) => a.executable,
+                      ).length
+                    }
+                  </span>
+                </div>
+              </div>
+
               <h3>Related Accounts</h3>
-              <div className="decoded-instruction-list">
+              <div className="accounts-grid">
                 {accountStorageInsights.accounts.map((account) => (
-                  <article
-                    key={account.pubkey}
-                    className="decoded-instruction-card"
-                  >
-                    <p className="meta">{account.pubkey}</p>
+                  <article key={account.pubkey} className="account-card">
+                    <div className="account-header">
+                      <div className="account-info">
+                        <h4 className="account-type">
+                          {getAccountType(account)}
+                        </h4>
+                        {renderAccountAddress(account.pubkey)}
+                      </div>
+                      <div className="account-badges">
+                        {getAccountBadges(account).map((badge) => (
+                          <span
+                            key={`${account.pubkey}-${badge.type}`}
+                            className={`badge badge-${badge.type}`}
+                          >
+                            {badge.label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
                     {!account.found ? (
                       <p className="meta error">
                         Account not found on selected endpoint
                       </p>
                     ) : (
-                      <div className="clean-kv-list">
-                        <div className="clean-kv-item">
-                          <span>owner</span>
-                          <strong>{account.owner || "n/a"}</strong>
+                      <>
+                        <div className="account-properties">
+                          <h5 className="properties-title">Account Details</h5>
+                          <div className="properties-group">
+                            <div className="property-row">
+                              <span className="property-label">Balance</span>
+                              <span className="property-value">
+                                {formatSol(account.lamports)}
+                              </span>
+                            </div>
+                            <div className="property-row">
+                              <span className="property-label">Owner</span>
+                              <code className="property-value address-mini">
+                                {shortenAddress(account.owner)}
+                              </code>
+                            </div>
+                            <div className="property-row">
+                              <span className="property-label">Storage</span>
+                              <span className="property-value">
+                                {account.space || 0} bytes
+                              </span>
+                            </div>
+                          </div>
+
+                          {account.rentEpoch !== null &&
+                            account.rentEpoch !== undefined && (
+                              <div className="property-row">
+                                <span className="property-label">
+                                  Rent Epoch
+                                </span>
+                                <span className="property-value">
+                                  {account.rentEpoch}
+                                </span>
+                              </div>
+                            )}
                         </div>
-                        <div className="clean-kv-item">
-                          <span>lamports</span>
-                          <strong>{statValue(account.lamports)}</strong>
-                        </div>
-                        <div className="clean-kv-item">
-                          <span>space</span>
-                          <strong>{statValue(account.space)}</strong>
-                        </div>
-                        <div className="clean-kv-item">
-                          <span>executable</span>
-                          <strong>
-                            {account.executable ? "true" : "false"}
-                          </strong>
-                        </div>
-                        <div className="clean-kv-item">
-                          <span>rentEpoch</span>
-                          <strong>{statValue(account.rentEpoch)}</strong>
-                        </div>
-                        <div className="clean-kv-item">
-                          <span>dataEncoding</span>
-                          <strong>{statValue(account.dataEncoding)}</strong>
-                        </div>
-                        <div className="clean-kv-item">
-                          <span>dataLength</span>
-                          <strong>{statValue(account.dataLength)}</strong>
-                        </div>
-                        <div className="clean-kv-item">
-                          <span>parsedType</span>
-                          <strong>{statValue(account.parsedType)}</strong>
-                        </div>
-                      </div>
+
+                        {account.parsedType && (
+                          <div className="account-metadata">
+                            <h5 className="metadata-title">Type Info</h5>
+                            <p className="metadata-value">
+                              {account.parsedType}
+                            </p>
+                            {account.dataEncoding && (
+                              <p className="metadata-secondary">
+                                Encoding: {account.dataEncoding}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
 
                     {account.parsedInfo && (
                       <details className="detail-block read-log-block">
-                        <summary>Parsed info</summary>
-                        <pre>{JSON.stringify(account.parsedInfo, null, 2)}</pre>
+                        <summary>📋 Parsed Info</summary>
+                        <pre className="json-preview">
+                          {JSON.stringify(account.parsedInfo, null, 2)}
+                        </pre>
                       </details>
                     )}
 
                     {account.binaryDecoded && (
                       <details open className="detail-block read-log-block">
-                        <summary>Decoded binary data</summary>
-                        <div className="clean-kv-list">
-                          <div className="clean-kv-item">
-                            <span>byteLength</span>
-                            <strong>{account.binaryDecoded.byteLength}</strong>
+                        <summary>🔍 Decoded Binary Data</summary>
+                        <div className="binary-section">
+                          <div className="binary-metadata">
+                            <span className="meta-item">
+                              <strong>Size:</strong>{" "}
+                              {account.binaryDecoded.byteLength} bytes
+                            </span>
+                            {account.binaryDecoded.discriminator && (
+                              <span className="meta-item">
+                                <strong>Discriminator:</strong>{" "}
+                                {account.binaryDecoded.discriminator}
+                              </span>
+                            )}
                           </div>
-                          <div className="clean-kv-item">
-                            <span>anchorDiscriminator</span>
-                            <strong>
-                              {account.binaryDecoded.discriminator || "n/a"}
-                            </strong>
-                          </div>
-                        </div>
 
-                        {Array.isArray(account.binaryDecoded.fields) &&
-                          account.binaryDecoded.fields.length > 0 && (
-                            <div className="clean-kv-list">
-                              {account.binaryDecoded.fields.map((field) => (
-                                <div
-                                  key={`${account.pubkey}-${field.type}-${field.offset}`}
-                                  className="clean-kv-item"
-                                >
-                                  <span>
-                                    {field.label} @ {field.offset}
-                                  </span>
-                                  <strong>{field.value}</strong>
+                          {Array.isArray(account.binaryDecoded.fields) &&
+                            account.binaryDecoded.fields.length > 0 && (
+                              <div className="decoded-fields">
+                                <h6>Decoded Fields</h6>
+                                <div className="fields-list">
+                                  {account.binaryDecoded.fields.map((field) => (
+                                    <div
+                                      key={`${account.pubkey}-${field.type}-${field.offset}`}
+                                      className="field-item"
+                                    >
+                                      <div className="field-header">
+                                        <span className="field-name">
+                                          {field.label}
+                                        </span>
+                                        <span className="field-offset">
+                                          @ {field.offset}
+                                        </span>
+                                      </div>
+                                      <code className="field-value">
+                                        {field.value}
+                                      </code>
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
-                            </div>
-                          )}
+                              </div>
+                            )}
 
-                        <pre>{account.binaryDecoded.hexPreview}</pre>
+                          <details className="hex-preview-block">
+                            <summary>Hex Preview</summary>
+                            <pre className="hex-code">
+                              {account.binaryDecoded.hexPreview}
+                            </pre>
+                          </details>
+                        </div>
                       </details>
                     )}
                   </article>

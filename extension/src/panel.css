@@ -993,3 +993,368 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+
+/* ========== ENHANCED ACCOUNTS DISPLAY ========== */
+
+.accounts-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.summary-stat {
+  border: 1px solid #3a4a52;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #1a2530 0%, #0f1b26 100%);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-label {
+  font-size: 10px;
+  color: #8fa8b4;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: #4fc7ff;
+}
+
+.accounts-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.account-card {
+  border: 1px solid #2f3a42;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #151a22 0%, #0f1419 100%);
+  padding: 12px;
+  overflow: hidden;
+}
+
+.account-card:hover {
+  border-color: #3f5a66;
+  background: linear-gradient(180deg, #1a2130 0%, #131a22 100%);
+}
+
+.account-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2a3540;
+}
+
+.account-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-type {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4fc7ff;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.account-address {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.address-link {
+  background: #0a0e14;
+  border: 1px solid #2a3a42;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+  color: #4fc7ff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.address-link:hover {
+  border-color: #4fc7ff;
+  background: #0f1520;
+  box-shadow: 0 0 8px rgba(79, 199, 255, 0.2);
+}
+
+.copy-hint {
+  color: #6a7a82;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.address-mini {
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+  font-size: 10px;
+  color: #4fc7ff;
+  background: #0a0e14;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.account-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+  min-width: fit-content;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.badge-executable {
+  background: rgba(255, 171, 70, 0.15);
+  color: #ffab46;
+  border: 1px solid rgba(255, 171, 70, 0.4);
+}
+
+.badge-token {
+  background: rgba(76, 208, 122, 0.15);
+  color: #4cd07a;
+  border: 1px solid rgba(76, 208, 122, 0.4);
+}
+
+.badge-system {
+  background: rgba(155, 155, 155, 0.15);
+  color: #9b9b9b;
+  border: 1px solid rgba(155, 155, 155, 0.4);
+}
+
+.badge-storage {
+  background: rgba(141, 193, 232, 0.15);
+  color: #8dc1e8;
+  border: 1px solid rgba(141, 193, 232, 0.4);
+}
+
+.account-properties {
+  margin-bottom: 10px;
+}
+
+.properties-title {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #9fb2bf;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.properties-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.property-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: #0a0e14;
+  border-radius: 4px;
+  border: 1px solid #1a2530;
+}
+
+.property-label {
+  font-size: 9px;
+  color: #6a7a82;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.property-value {
+  font-size: 11px;
+  color: #dfeaf2;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.account-metadata {
+  background: #0a0e14;
+  border: 1px solid #1a2530;
+  border-radius: 4px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.metadata-title {
+  margin: 0 0 4px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #8fa8b4;
+  text-transform: uppercase;
+}
+
+.metadata-value {
+  margin: 0;
+  font-size: 11px;
+  color: #9df0b7;
+  font-weight: 600;
+}
+
+.metadata-secondary {
+  margin: 3px 0 0;
+  font-size: 10px;
+  color: #6a7a82;
+}
+
+.detail-block.read-log-block {
+  margin-top: 8px;
+  border: 1px solid #1a2530;
+  border-radius: 4px;
+  background: #0a0e14;
+}
+
+.detail-block.read-log-block summary {
+  padding: 8px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  color: #8fa8b4;
+  user-select: none;
+  transition: color 0.2s ease;
+}
+
+.detail-block.read-log-block summary:hover {
+  color: #4fc7ff;
+}
+
+.json-preview,
+.hex-code {
+  background: #000;
+  border: 1px solid #2a3a42;
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 9px;
+  color: #4fc7ff;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.binary-section {
+  padding: 8px 0;
+}
+
+.binary-metadata {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 0 0 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #1a2530;
+}
+
+.meta-item {
+  font-size: 10px;
+  color: #8fa8b4;
+}
+
+.meta-item strong {
+  color: #dfeaf2;
+  margin-right: 4px;
+}
+
+.decoded-fields {
+  margin: 8px 0;
+  padding: 8px 0;
+  border-top: 1px solid #1a2530;
+}
+
+.decoded-fields h6 {
+  margin: 0 0 6px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #8fa8b4;
+  text-transform: uppercase;
+}
+
+.fields-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-item {
+  background: #0f1419;
+  border: 1px solid #1a2530;
+  border-radius: 4px;
+  padding: 6px;
+}
+
+.field-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.field-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: #dfeaf2;
+}
+
+.field-offset {
+  font-size: 9px;
+  color: #6a7a82;
+}
+
+.field-value {
+  display: block;
+  font-size: 10px;
+  color: #9df0b7;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+  word-break: break-all;
+  background: #000;
+  padding: 4px;
+  border-radius: 2px;
+}
+
+.hex-preview-block {
+  margin-top: 6px;
+  border-top: 1px solid #1a2530;
+  padding-top: 6px;
+}
+
+.hex-preview-block summary {
+  font-size: 10px;
+  font-weight: 600;
+  color: #8fa8b4;
+  cursor: pointer;
+  user-select: none;
+}
+
+.hex-preview-block summary:hover {
+  color: #4fc7ff;
+}
