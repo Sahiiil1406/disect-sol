@@ -7,7 +7,11 @@ import {
   formatSol,
   calculateTotalLamports,
   formatAddressForDisplay,
+  getAccountRoles,
+  parseTransactionError,
+  getErrorSeverity,
 } from "./traceUtils";
+import InstructionTreeViewer from "./InstructionTreeViewer";
 
 function statValue(value) {
   return value === undefined || value === null || value === "" ? "n/a" : value;
@@ -19,6 +23,24 @@ function copyToClipboard(text) {
   }
 }
 
+function sendRuntimeMessage(message) {
+  return new Promise((resolve, reject) => {
+    if (!chrome?.runtime?.sendMessage) {
+      reject(new Error("Extension messaging is not available"));
+      return;
+    }
+
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+
+      resolve(response);
+    });
+  });
+}
+
 function renderAccountAddress(address) {
   return (
     <div className="account-address">
@@ -27,7 +49,7 @@ function renderAccountAddress(address) {
         title={address}
         onClick={() => copyToClipboard(address)}
       >
-        {shortenAddress(address)}
+        {address}
       </code>
       <span className="copy-hint">(click to copy)</span>
     </div>
@@ -40,6 +62,54 @@ function firstItems(value, max = 8) {
   }
 
   return value.slice(0, max);
+}
+
+function collectResultLogs(result) {
+  if (!result || !Array.isArray(result.sections)) {
+    return [];
+  }
+
+  return result.sections
+    .flatMap((section) => (Array.isArray(section.logs) ? section.logs : []))
+    .filter((entry) => typeof entry === "string" && entry.trim().length > 0);
+}
+
+function markNewResultLogs(nextResult, previousResult) {
+  if (!nextResult || nextResult.status === "error") {
+    return nextResult;
+  }
+
+  const previousLogs = new Set(
+    collectResultLogs(previousResult).map((entry) => entry.trim()),
+  );
+
+  const sections = Array.isArray(nextResult.sections)
+    ? nextResult.sections.map((section) => {
+        if (!Array.isArray(section.logs)) {
+          return section;
+        }
+
+        return {
+          ...section,
+          newLogFlags: section.logs.map((entry) => {
+            if (typeof entry !== "string") {
+              return false;
+            }
+
+            return !previousLogs.has(entry.trim());
+          }),
+        };
+      })
+    : [];
+
+  return {
+    ...nextResult,
+    sections,
+  };
+}
+
+function countResultLogs(result) {
+  return collectResultLogs(result).length;
 }
 
 function flattenImportantParams(value) {
@@ -717,6 +787,9 @@ export function TraceDetail({
   accountStorageInsights,
 }) {
   const [hoveredSegment, setHoveredSegment] = useState(null);
+  const [simulationResult, setSimulationResult] = useState(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [simulationType, setSimulationType] = useState(null);
   const detailedTimeline = useMemo(() => buildDetailedTimeline(trace), [trace]);
   const lifecycleSteps = useMemo(
     () => buildLifecycleSteps(trace, txInsights, detailedTimeline.startAt),
@@ -751,6 +824,10 @@ export function TraceDetail({
       durationMs: segment.durationMs,
     }));
   }, [timelineScale]);
+  const simulationLogCount = useMemo(
+    () => countResultLogs(simulationResult),
+    [simulationResult],
+  );
   const isOnChainTimeline = useMemo(
     () => isOnChainTransactionTrace(trace, txInsights),
     [trace, txInsights],
@@ -852,6 +929,20 @@ export function TraceDetail({
             onClick={() => onChangeViewMode("accounts")}
           >
             Account Storage
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "instructions" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("instructions")}
+          >
+            Instructions
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "replay" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("replay")}
+          >
+            Replay
           </button>
         </div>
 
@@ -1012,6 +1103,20 @@ export function TraceDetail({
           >
             Account Storage
           </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "instructions" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("instructions")}
+          >
+            Instructions
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "replay" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("replay")}
+          >
+            Replay
+          </button>
         </div>
 
         <div className="clean-hero">
@@ -1152,49 +1257,6 @@ export function TraceDetail({
             </section>
           )}
 
-        {Array.isArray(cleanSummary?.instructions) &&
-          cleanSummary.instructions.length > 0 && (
-            <section className="clean-section">
-              <h3>Instruction decoder</h3>
-              <div className="decoded-instruction-list">
-                {firstItems(cleanSummary.instructions, 10).map(
-                  (instruction) => {
-                    const decodedPairs =
-                      buildInstructionDecodedPairs(instruction);
-                    return (
-                      <article
-                        key={`${instruction.index}-${instruction.programId}`}
-                        className="decoded-instruction-card"
-                      >
-                        <p className="meta">
-                          #{instruction.index} - {instruction.programId}
-                        </p>
-                        <p className="meta">
-                          Accounts: {statValue(instruction.accountCount)}
-                        </p>
-                        {decodedPairs.length > 0 ? (
-                          <div className="clean-kv-list">
-                            {decodedPairs.map((pair) => (
-                              <div
-                                key={`${instruction.index}-${pair.key}`}
-                                className="clean-kv-item"
-                              >
-                                <span>{pair.key}</span>
-                                <strong>{pair.value}</strong>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="meta">No decoded fields available</p>
-                        )}
-                      </article>
-                    );
-                  },
-                )}
-              </div>
-            </section>
-          )}
-
         {txInsights?.loading && (
           <p className="meta">Fetching on-chain details...</p>
         )}
@@ -1250,6 +1312,20 @@ export function TraceDetail({
             onClick={() => onChangeViewMode("accounts")}
           >
             Account Storage
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "instructions" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("instructions")}
+          >
+            Instructions
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "replay" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("replay")}
+          >
+            Replay
           </button>
         </div>
 
@@ -1328,6 +1404,19 @@ export function TraceDetail({
                             className={`badge badge-${badge.type}`}
                           >
                             {badge.label}
+                          </span>
+                        ))}
+                        {getAccountRoles(
+                          account,
+                          txInsights?.details?.transaction?.message,
+                          txInsights?.details?.transaction?.message
+                            ?.accountKeys,
+                        ).map((role) => (
+                          <span
+                            key={`${account.pubkey}-role-${role.type}`}
+                            className={`badge badge-role badge-role-${role.type}`}
+                          >
+                            {role.label}
                           </span>
                         ))}
                       </div>
@@ -1462,6 +1551,441 @@ export function TraceDetail({
     );
   }
 
+  if (viewMode === "instructions") {
+    const parsedErr = trace?.error ? parseTransactionError(trace.error) : null;
+    const txErr = txInsights?.details?.meta?.err
+      ? parseTransactionError(txInsights.details.meta.err)
+      : null;
+    const mainError = parsedErr || txErr;
+    const errorSeverity = mainError ? getErrorSeverity(mainError.raw) : null;
+
+    return (
+      <section className="detail-panel">
+        <div
+          className="detail-mode-tabs"
+          role="tablist"
+          aria-label="Detail mode"
+        >
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "timeline" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("timeline")}
+          >
+            Timeline
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "clean" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("clean")}
+          >
+            Clean UI
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "json" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("json")}
+          >
+            JSON
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "accounts" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("accounts")}
+          >
+            Account Storage
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "instructions" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("instructions")}
+          >
+            Instructions
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "replay" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("replay")}
+          >
+            Replay
+          </button>
+        </div>
+
+        <div className="clean-hero">
+          <h2>🔍 Instructions & Errors</h2>
+          <p className="clean-subtitle">
+            Detailed instruction breakdown with human-readable explanations
+          </p>
+        </div>
+
+        {mainError && (
+          <section className="error-display-section">
+            <div
+              className={`error-card error-${errorSeverity?.color || "error"}`}
+            >
+              <div className="error-header">
+                <span className="error-icon">⚠️</span>
+                <h3 className="error-title">Transaction Error</h3>
+                <span
+                  className={`error-severity error-severity-${errorSeverity?.level || "error"}`}
+                >
+                  {errorSeverity?.level?.toUpperCase() || "ERROR"}
+                </span>
+              </div>
+
+              <div className="error-content">
+                <div className="error-section">
+                  <h4 className="error-subsection-title">📋 What Went Wrong</h4>
+                  <p className="error-message">{mainError.human}</p>
+                </div>
+
+                {mainError.details && (
+                  <div className="error-section">
+                    <h4 className="error-subsection-title">🔧 Error Details</h4>
+                    <div className="error-details-grid">
+                      {Object.entries(mainError.details).map(([key, value]) => (
+                        <div key={key} className="error-detail-item">
+                          <span className="detail-key">{key}</span>
+                          <span className="detail-value">
+                            {typeof value === "object"
+                              ? JSON.stringify(value)
+                              : String(value)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <details className="error-raw-section">
+                  <summary>💻 Raw Error Data</summary>
+                  <pre className="error-raw-data">
+                    {JSON.stringify(mainError.raw, null, 2)}
+                  </pre>
+                </details>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {Array.isArray(cleanSummary?.instructions) &&
+          cleanSummary.instructions.length > 0 && (
+            <section className="clean-section">
+              <h3>📜 Instructions Breakdown</h3>
+              <p className="section-subtitle">
+                All {cleanSummary.instructions.length} instructions in this
+                transaction with decoded parameters
+              </p>
+              <InstructionTreeViewer instructions={cleanSummary.instructions} />
+            </section>
+          )}
+
+        {(!Array.isArray(cleanSummary?.instructions) ||
+          cleanSummary.instructions.length === 0) &&
+          !mainError && (
+            <p className="meta">No instructions or errors to display</p>
+          )}
+      </section>
+    );
+  }
+
+  if (viewMode === "replay") {
+    const handleMockSimulation = async () => {
+      setIsSimulating(true);
+      setSimulationType("mock");
+      try {
+        const { formatSimulationResults } = await import("./traceUtils");
+        const bridgeResponse = await sendRuntimeMessage({
+          type: "SOL_TRACE_REPLAY_COMMAND",
+          payload: {
+            mode: "mock",
+            rpcEndpoint: metrics.endpointUsed,
+            signature: txInsights?.signature || metrics.signature,
+            txDetails: txInsights?.details || null,
+          },
+        });
+        const result = bridgeResponse?.ok
+          ? { success: true, data: bridgeResponse.result }
+          : { success: false, error: bridgeResponse?.error || "Mock replay failed" };
+        const formatted = formatSimulationResults(result);
+        setSimulationResult((previous) => markNewResultLogs(formatted, previous));
+      } catch (err) {
+        setSimulationResult({
+          status: "error",
+          message: "Failed to perform simulation: " + err.message,
+        });
+      } finally {
+        setIsSimulating(false);
+      }
+    };
+
+    const handleRealTransaction = async () => {
+      setIsSimulating(true);
+      setSimulationType("real");
+      try {
+        const { formatSimulationResults } = await import("./traceUtils");
+        const bridgeResponse = await sendRuntimeMessage({
+          type: "SOL_TRACE_REPLAY_COMMAND",
+          payload: {
+            mode: "real",
+            rpcEndpoint: metrics.endpointUsed,
+            signature: txInsights?.signature || metrics.signature,
+            txDetails: txInsights?.details || null,
+          },
+        });
+        const result = bridgeResponse?.ok
+          ? { success: true, data: bridgeResponse.result }
+          : { success: false, error: bridgeResponse?.error || "On-chain replay failed" };
+        const formatted = formatSimulationResults(result);
+        setSimulationResult((previous) => markNewResultLogs(formatted, previous));
+      } catch (err) {
+        setSimulationResult({
+          status: "error",
+          message: "Failed to retrieve transaction details: " + err.message,
+        });
+      } finally {
+        setIsSimulating(false);
+      }
+    };
+
+    return (
+      <section className="detail-panel">
+        <div
+          className="detail-mode-tabs"
+          role="tablist"
+          aria-label="Detail mode"
+        >
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "timeline" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("timeline")}
+          >
+            Timeline
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "clean" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("clean")}
+          >
+            Clean UI
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "json" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("json")}
+          >
+            JSON
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "accounts" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("accounts")}
+          >
+            Account Storage
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "instructions" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("instructions")}
+          >
+            Instructions
+          </button>
+          <button
+            type="button"
+            className={`detail-mode-tab ${viewMode === "replay" ? "active" : ""}`}
+            onClick={() => onChangeViewMode("replay")}
+          >
+            Replay
+          </button>
+        </div>
+
+        <div className="clean-hero">
+          <h2>🔄 Replay & Simulate</h2>
+          <p className="clean-subtitle">
+            Wallet-confirmed mock simulation and live on-chain replay
+          </p>
+          <p className="meta">
+            Signature:{" "}
+            <code className="address-link" title={metrics.signature}>
+              {metrics.signature
+                ? metrics.signature.substring(0, 20) + "..."
+                : "n/a"}
+            </code>
+          </p>
+        </div>
+
+        <section className="replay-controls">
+          <div className="replay-button-group">
+            <button
+              className="replay-button replay-button-mock"
+              onClick={handleMockSimulation}
+              disabled={isSimulating}
+            >
+              {isSimulating && simulationType === "mock"
+                ? "⏳ Waiting for wallet..."
+                : "🧪 Mock Simulation"}
+            </button>
+            <p className="replay-button-hint">
+              Sign the transaction in your wallet, then simulate it locally
+              without broadcasting to chain
+            </p>
+          </div>
+
+          <div className="replay-button-group">
+            <button
+              className="replay-button replay-button-real"
+              onClick={handleRealTransaction}
+              disabled={isSimulating}
+            >
+              {isSimulating && simulationType === "real"
+                ? "⏳ Waiting for wallet..."
+                : "🚀 Replay On-chain"}
+            </button>
+            <p className="replay-button-hint">
+              Ask your wallet to confirm the transaction and broadcast it on
+              chain
+            </p>
+          </div>
+
+          {simulationResult && (
+            <div
+              className={`replay-inline-result ${
+                simulationResult.status === "error"
+                  ? "replay-inline-result-error"
+                  : "replay-inline-result-success"
+              }`}
+            >
+              {simulationResult.status === "error" ? (
+                <p className="replay-inline-result-text">
+                  Latest result: {simulationResult.message}
+                </p>
+              ) : (
+                <p className="replay-inline-result-text">
+                  Latest result shown below. Captured logs: {simulationLogCount}
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+
+        {simulationResult && (
+          <section className="simulation-results">
+            {simulationResult.status === "error" ? (
+              <div className="error-card error-error">
+                <div className="error-header">
+                  <span className="error-icon">⚠️</span>
+                  <h3 className="error-title">Simulation Error</h3>
+                </div>
+                <p className="error-message">{simulationResult.message}</p>
+              </div>
+            ) : (
+              <>
+                {simulationResult.sections &&
+                  simulationResult.sections.map((section, idx) => (
+                    <div key={idx} className="simulation-section">
+                      <h3 className="simulation-section-title">
+                        {section.title}
+                      </h3>
+
+                      {section.items && (
+                        <div className="simulation-metrics">
+                          {section.items.map((item, iIdx) => (
+                            <div key={iIdx} className="metric-pair">
+                              <span className="metric-label">{item.label}</span>
+                              <span className="metric-value">
+                                {item.value}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {section.logs && (
+                        <div className="simulation-logs">
+                          {section.logs.map((log, lIdx) => (
+                            <div
+                              key={lIdx}
+                              className={`log-entry ${section.newLogFlags?.[lIdx] ? "log-entry-new" : ""}`}
+                            >
+                              <code>{log}</code>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {section.changes && (
+                        <div className="state-changes-list">
+                          {section.changes.map((change, cIdx) => (
+                            <div key={cIdx} className="state-change-item">
+                              <div className="change-account">
+                                <strong>{change.kind === "token" ? "Token Account:" : "Account:"}</strong>
+                                <code className="address-code">
+                                  {shortenAddress(change.account)}
+                                </code>
+                                {change.label && (
+                                  <span className="change-label">{change.label}</span>
+                                )}
+                              </div>
+                              <div className="change-balances">
+                                <span className="balance-before">
+                                  Before: {change.beforeValue || "n/a"}
+                                </span>
+                                <span className="balance-arrow">→</span>
+                                <span className="balance-after">
+                                  After: {change.afterValue || "n/a"}
+                                </span>
+                              </div>
+                              {typeof change.delta === "number" && (
+                                <div
+                                  className={`balance-delta ${change.delta > 0 ? "positive" : "negative"}`}
+                                >
+                                  {change.delta > 0 ? "+" : ""}
+                                  {formatLamports(change.delta)}
+                                </div>
+                              )}
+                              {change.mint && (
+                                <div className="change-meta-line">
+                                  <span className="change-meta-key">Mint:</span>
+                                  <code className="change-meta-value">
+                                    {change.mint}
+                                  </code>
+                                </div>
+                              )}
+                              {typeof change.accountIndex === "number" && (
+                                <div className="change-meta-line">
+                                  <span className="change-meta-key">Account Index:</span>
+                                  <span className="change-meta-value">
+                                    {change.accountIndex}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {section.error && (
+                        <pre className="error-raw-data">
+                          {JSON.stringify(section.error, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+              </>
+            )}
+          </section>
+        )}
+
+        {!simulationResult && (
+          <div className="replay-empty-state">
+            <p className="meta">
+              Click a button above to simulate or fetch transaction details
+            </p>
+          </div>
+        )}
+      </section>
+    );
+  }
+
   const traceJson = {
     functionName: trace?.functionName || trace?.method || "unknown",
     callId: trace?.callId || "n/a",
@@ -1519,6 +2043,20 @@ export function TraceDetail({
           onClick={() => onChangeViewMode("accounts")}
         >
           Account Storage
+        </button>
+        <button
+          type="button"
+          className={`detail-mode-tab ${viewMode === "instructions" ? "active" : ""}`}
+          onClick={() => onChangeViewMode("instructions")}
+        >
+          Instructions
+        </button>
+        <button
+          type="button"
+          className={`detail-mode-tab ${viewMode === "replay" ? "active" : ""}`}
+          onClick={() => onChangeViewMode("replay")}
+        >
+          Replay
         </button>
       </div>
 

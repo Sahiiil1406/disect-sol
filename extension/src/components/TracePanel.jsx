@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   buildTraces,
   buildExplorerLinks,
@@ -322,6 +322,9 @@ export function TracePanel() {
   const [error, setError] = useState("");
   const [selectedTraceId, setSelectedTraceId] = useState("");
   const [viewMode, setViewMode] = useState("timeline");
+  const [highlightedTraceIds, setHighlightedTraceIds] = useState([]);
+  const previousTraceIdsRef = useRef(new Set());
+  const highlightTimersRef = useRef(new Map());
   const [txInsights, setTxInsights] = useState({
     loading: false,
     error: "",
@@ -410,6 +413,50 @@ export function TracePanel() {
   }, []);
 
   const traces = useMemo(() => buildTraces(events), [events]);
+
+  useEffect(() => {
+    const previous = previousTraceIdsRef.current;
+    const nextIds = traces.map((trace) => trace.traceId).filter(Boolean);
+    const nextSet = new Set(nextIds);
+    const freshIds = nextIds.filter((traceId) => !previous.has(traceId));
+
+    if (freshIds.length > 0) {
+      setHighlightedTraceIds((current) => {
+        const merged = new Set(current);
+        for (const traceId of freshIds) {
+          merged.add(traceId);
+        }
+        return [...merged];
+      });
+
+      for (const traceId of freshIds) {
+        const existingTimer = highlightTimersRef.current.get(traceId);
+        if (existingTimer) {
+          window.clearTimeout(existingTimer);
+        }
+
+        const timer = window.setTimeout(() => {
+          setHighlightedTraceIds((current) =>
+            current.filter((item) => item !== traceId),
+          );
+          highlightTimersRef.current.delete(traceId);
+        }, 7000);
+
+        highlightTimersRef.current.set(traceId, timer);
+      }
+    }
+
+    previousTraceIdsRef.current = nextSet;
+  }, [traces]);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of highlightTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      highlightTimersRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedTraceId && traces.length > 0) {
@@ -871,6 +918,7 @@ export function TracePanel() {
             traces={traces}
             selectedTraceId={selectedTraceId}
             onSelect={setSelectedTraceId}
+            highlightedTraceIds={highlightedTraceIds}
           />
           <TraceDetail
             trace={selectedTrace}
