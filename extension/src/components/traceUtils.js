@@ -1871,3 +1871,144 @@ export function formatSimulationResults(simulationResult) {
     sections,
   };
 }
+
+export function extractComputeUnitsFromLogs(logs) {
+  if (!Array.isArray(logs)) {
+    return null;
+  }
+
+  for (const log of logs) {
+    if (typeof log !== "string") continue;
+    const match = log.match(/consumed\s+(\d+)\s+of\s+(\d+)\s+compute\s+units/i);
+    if (match) {
+      return {
+        consumed: parseInt(match[1], 10),
+        budget: parseInt(match[2], 10),
+      };
+    }
+  }
+  return null;
+}
+
+export function calculateSuggestedBudget(actualConsumed) {
+  if (typeof actualConsumed !== "number" || actualConsumed < 0) {
+    return null;
+  }
+  return Math.floor(actualConsumed * 1.1) + 1000;
+}
+
+export function extractComputeBudgetFromInstructions(instructions) {
+  if (!Array.isArray(instructions)) {
+    return null;
+  }
+
+  for (const ix of instructions) {
+    if (
+      ix.programId === "ComputeBudget111111111111111111111111111111" ||
+      ix.program === "ComputeBudget"
+    ) {
+      if (ix.parsed?.type === "setComputeUnitLimit") {
+        return {
+          units: ix.parsed?.info?.units || ix.data?.units,
+          price: null,
+        };
+      }
+      if (ix.parsed?.type === "setComputeUnitPrice") {
+        return {
+          units: null,
+          price: ix.parsed?.info?.microlamports || ix.data?.microlamports,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+export function buildCpiCostTree(logs) {
+  if (!Array.isArray(logs)) {
+    return [];
+  }
+
+  const tree = [];
+  const stack = [];
+
+  for (const log of logs) {
+    if (typeof log !== "string") continue;
+
+    const invokeMatch = log.match(
+      /Program\s+(\w+)\s+invoke\s+\[(\d+)\]/
+    );
+    if (invokeMatch) {
+      const [, programId, depth] = invokeMatch;
+      const depthNum = parseInt(depth, 10);
+
+      while (stack.length > depthNum - 1) {
+        stack.pop();
+      }
+
+      const node = {
+        depth: depthNum,
+        programId,
+        logs: [],
+        children: [],
+      };
+
+      if (stack.length === 0) {
+        tree.push(node);
+      } else {
+        stack[stack.length - 1].children.push(node);
+      }
+
+      stack.push(node);
+      continue;
+    }
+
+    const successMatch = log.match(
+      /Program\s+(\w+)\s+consumed\s+(\d+)\s+of\s+(\d+)\s+compute\s+units/
+    );
+    if (successMatch && stack.length > 0) {
+      const [, , consumed] = successMatch;
+      stack[stack.length - 1].consumed = parseInt(consumed, 10);
+      continue;
+    }
+
+    if (stack.length > 0) {
+      stack[stack.length - 1].logs.push(log);
+    }
+  }
+
+  return tree;
+}
+
+export function getCuAnalysis(trace, txInsights) {
+  if (!trace && !txInsights) {
+    return null;
+  }
+
+  const details = txInsights?.details;
+  const meta = details?.meta || trace?.result?.meta || trace?.meta || {};
+  const logs = meta.logMessages || meta.logs || trace?.result?.logs || [];
+  const instructions =
+    details?.transaction?.message?.instructions ||
+    trace?.result?.transaction?.message?.instructions ||
+    trace?.transaction?.message?.instructions ||
+    [];
+
+  const cuMetrics = extractComputeUnitsFromLogs(logs);
+  const budgetInfo = extractComputeBudgetFromInstructions(instructions);
+  const cpiTree = buildCpiCostTree(logs);
+
+  const suggested =
+    cuMetrics && cuMetrics.consumed
+      ? calculateSuggestedBudget(cuMetrics.consumed)
+      : null;
+
+  return {
+    budgetSet: budgetInfo?.units || cuMetrics?.budget || null,
+    actualConsumed: cuMetrics?.consumed || null,
+    suggestedBudget: suggested,
+    cpiBreakdown: cpiTree,
+  };
+}
+
+

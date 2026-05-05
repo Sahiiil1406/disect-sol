@@ -672,11 +672,69 @@ if (window.__SOL_TRACE_INPAGE_INSTALLED__) {
 
   async function simulateWithWallet(txDetails, rpcEndpoint) {
     const wallet = getWalletProvider();
-    if (!wallet?.signTransaction) {
+    if (!wallet?.signTransaction && !wallet?.signAndSendTransaction) {
       throw new Error("No wallet provider available for mock replay");
     }
 
-    // Try to reconstruct Transaction object first (requires web3.js in page)
+    // Priority 1: Try to use the original serialized transaction bytes (most accurate)
+    const candidate =
+      txDetails?.transaction?.serialized ||
+      txDetails?.transaction?.serializedTx ||
+      txDetails?.serialized ||
+      txDetails?.raw?.serialized ||
+      null;
+
+    if (candidate) {
+      let base64 = null;
+      if (candidate instanceof Uint8Array || Array.isArray(candidate)) {
+        base64 = encodeBytesToBase64(
+          candidate instanceof Uint8Array
+            ? candidate
+            : Uint8Array.from(candidate),
+        );
+      } else if (typeof candidate === "string") {
+        base64 = candidate;
+      }
+
+      if (base64) {
+        try {
+          const simulation = await rpcRequest(
+            rpcEndpoint,
+            "simulateTransaction",
+            [
+              base64,
+              {
+                encoding: "base64",
+                sigVerify: false,
+                replaceRecentBlockhash: true,
+                commitment: "confirmed",
+              },
+            ],
+          );
+          const value = simulation?.value || simulation || {};
+          const meta = getTransactionMeta(txDetails);
+
+          return {
+            mode: "mock",
+            fee: meta.fee || 0,
+            computeUnits:
+              value.unitsConsumed ??
+              value.computeUnitsConsumed ??
+              meta.computeUnitsConsumed ??
+              0,
+            logs: mergeLogs(value.logs || [], meta.logMessages || []),
+            stateChanges: buildStateChangeRows(txDetails),
+            status: value.err || meta.err ? "failed" : "succeeded",
+            error: value.err || meta.err || null,
+            replayType: "raw-serialized-simulate",
+          };
+        } catch (err) {
+          console.warn("Serialized simulation failed, trying reconstruction:", err);
+        }
+      }
+    }
+
+    // Priority 2: Try to reconstruct Transaction object (requires web3.js in page)
     const tx = await buildReplayTransaction(txDetails);
     if (tx) {
       try {
@@ -723,63 +781,6 @@ if (window.__SOL_TRACE_INPAGE_INSTALLED__) {
             err.message +
             " (Make sure the page has window.solanaWeb3 available)",
         );
-      }
-    }
-
-    // Fallback: attempt to use serialized transaction bytes from trace (raw signed tx)
-    const candidate =
-      txDetails?.transaction?.serialized ||
-      txDetails?.transaction?.serializedTx ||
-      txDetails?.serialized ||
-      txDetails?.raw?.serialized ||
-      null;
-    if (candidate) {
-      let base64 = null;
-      if (candidate instanceof Uint8Array || Array.isArray(candidate)) {
-        base64 = encodeBytesToBase64(
-          candidate instanceof Uint8Array
-            ? candidate
-            : Uint8Array.from(candidate),
-        );
-      } else if (typeof candidate === "string") {
-        base64 = candidate;
-      }
-
-      if (base64) {
-        try {
-          const simulation = await rpcRequest(
-            rpcEndpoint,
-            "simulateTransaction",
-            [
-              base64,
-              {
-                encoding: "base64",
-                sigVerify: false,
-                replaceRecentBlockhash: true,
-                commitment: "confirmed",
-              },
-            ],
-          );
-          const value = simulation?.value || simulation || {};
-          const meta = getTransactionMeta(txDetails);
-
-          return {
-            mode: "mock",
-            fee: meta.fee || 0,
-            computeUnits:
-              value.unitsConsumed ??
-              value.computeUnitsConsumed ??
-              meta.computeUnitsConsumed ??
-              0,
-            logs: mergeLogs(value.logs || [], meta.logMessages || []),
-            stateChanges: buildStateChangeRows(txDetails),
-            status: value.err || meta.err ? "failed" : "succeeded",
-            error: value.err || meta.err || null,
-            replayType: "raw-signed-simulate",
-          };
-        } catch (err) {
-          throw new Error("Simulation failed: " + err.message);
-        }
       }
     }
 

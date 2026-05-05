@@ -10,6 +10,7 @@ import {
   getAccountRoles,
   parseTransactionError,
   getErrorSeverity,
+  getCuAnalysis,
 } from "./traceUtils";
 import InstructionTreeViewer from "./InstructionTreeViewer";
 
@@ -1170,6 +1171,86 @@ export function TraceDetail({
           </article>
         </div>
 
+        {(() => {
+          const cuAnalysis = getCuAnalysis(trace, txInsights);
+          if (
+            !cuAnalysis ||
+            (cuAnalysis.actualConsumed === null &&
+              cuAnalysis.budgetSet === null &&
+              (!cuAnalysis.cpiBreakdown ||
+                cuAnalysis.cpiBreakdown.length === 0))
+          ) {
+            return null;
+          }
+          return (
+            <section className="clean-section">
+              <h3>⚡ Compute Unit Analysis</h3>
+              <div className="clean-kv-list">
+                {cuAnalysis.budgetSet !== null && (
+                  <div className="clean-kv-item">
+                    <span>Budget Set</span>
+                    <strong>{cuAnalysis.budgetSet} CU</strong>
+                  </div>
+                )}
+                {cuAnalysis.actualConsumed !== null && (
+                  <div className="clean-kv-item">
+                    <span>Actual Consumed</span>
+                    <strong>{cuAnalysis.actualConsumed} CU</strong>
+                  </div>
+                )}
+                {cuAnalysis.suggestedBudget !== null && (
+                  <div className="clean-kv-item">
+                    <span>Suggested Budget</span>
+                    <strong>{cuAnalysis.suggestedBudget} CU</strong>
+                  </div>
+                )}
+              </div>
+              {cuAnalysis.cpiBreakdown &&
+                cuAnalysis.cpiBreakdown.length > 0 && (
+                  <details className="clean-details">
+                    <summary>CPI Cost Breakdown</summary>
+                    <div className="cu-cpi-tree">
+                      {cuAnalysis.cpiBreakdown.map((node, idx) => (
+                        <div key={idx} className="cu-cpi-node">
+                          <div className="cu-cpi-header">
+                            <code className="cu-program-id">
+                              {shortenAddress(node.programId)}
+                            </code>
+                            {node.consumed !== undefined && (
+                              <span className="cu-cpi-cost">
+                                {node.consumed} CU
+                              </span>
+                            )}
+                          </div>
+                          {node.children &&
+                            node.children.length > 0 && (
+                              <div className="cu-cpi-children">
+                                {node.children.map((child, childIdx) => (
+                                  <div
+                                    key={childIdx}
+                                    className="cu-cpi-child-node"
+                                  >
+                                    <code className="cu-program-id">
+                                      {shortenAddress(child.programId)}
+                                    </code>
+                                    {child.consumed !== undefined && (
+                                      <span className="cu-cpi-cost">
+                                        {child.consumed} CU
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+            </section>
+          );
+        })()}
+
         {(txInsights?.signature || txInsights?.explorerLinks) && (
           <section className="clean-section">
             <h3>Transaction</h3>
@@ -1865,6 +1946,99 @@ export function TraceDetail({
               )}
             </div>
           )}
+
+          {(() => {
+            const cuAnalysis = getCuAnalysis(trace, txInsights);
+            if (
+              !cuAnalysis ||
+              (cuAnalysis.actualConsumed === null &&
+                cuAnalysis.budgetSet === null)
+            ) {
+              return null;
+            }
+            return (
+              <div className="cu-analysis-summary">
+                <h4 className="cu-analysis-title">⚡ Compute Unit Analysis</h4>
+                <div className="cu-metrics-row">
+                  {cuAnalysis.budgetSet !== null && (
+                    <div className="cu-metric">
+                      <span className="cu-label">Budget Set</span>
+                      <strong className="cu-value">
+                        {cuAnalysis.budgetSet} CU
+                      </strong>
+                    </div>
+                  )}
+                  {cuAnalysis.actualConsumed !== null && (
+                    <div className="cu-metric">
+                      <span className="cu-label">Actual Consumed</span>
+                      <strong className="cu-value">
+                        {cuAnalysis.actualConsumed} CU
+                      </strong>
+                    </div>
+                  )}
+                  {cuAnalysis.suggestedBudget !== null && (
+                    <div className="cu-metric">
+                      <span className="cu-label">Suggested Budget</span>
+                      <strong className="cu-value">
+                        {cuAnalysis.suggestedBudget} CU
+                      </strong>
+                      <button
+                        className="cu-copy-btn"
+                        onClick={() =>
+                          copyToClipboard(
+                            `setComputeUnitLimit(${cuAnalysis.suggestedBudget})`
+                          )
+                        }
+                      >
+                        Copy fix
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {cuAnalysis.cpiBreakdown &&
+                  cuAnalysis.cpiBreakdown.length > 0 && (
+                    <details className="cu-cpi-details">
+                      <summary>CPI Cost Breakdown</summary>
+                      <div className="cu-cpi-tree">
+                        {cuAnalysis.cpiBreakdown.map((node, idx) => (
+                          <div key={idx} className="cu-cpi-node">
+                            <div className="cu-cpi-header">
+                              <code className="cu-program-id">
+                                {shortenAddress(node.programId)}
+                              </code>
+                              {node.consumed !== undefined && (
+                                <span className="cu-cpi-cost">
+                                  {node.consumed} CU
+                                </span>
+                              )}
+                            </div>
+                            {node.children && node.children.length > 0 && (
+                              <div className="cu-cpi-children">
+                                {node.children.map((child, childIdx) => (
+                                  <div
+                                    key={childIdx}
+                                    className="cu-cpi-child-node"
+                                  >
+                                    <code className="cu-program-id">
+                                      {shortenAddress(child.programId)}
+                                    </code>
+                                    {child.consumed !== undefined && (
+                                      <span className="cu-cpi-cost">
+                                        {child.consumed} CU
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+              </div>
+            );
+          })()}
         </section>
 
         {simulationResult && (

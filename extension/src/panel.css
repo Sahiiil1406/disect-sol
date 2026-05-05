@@ -2462,3 +2462,156 @@ h1 {
   font-size: 12px;
   color: #8fa8b4;
 }
+
+.cu-analysis-summary {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid #3a5a68;
+  border-radius: 6px;
+  background: #0f2937;
+}
+
+.cu-analysis-title {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4ac5d4;
+}
+
+.cu-metrics-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.cu-metric {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  background: #1a2d35;
+  border-radius: 4px;
+  border-left: 3px solid #4ac5d4;
+}
+
+.cu-label {
+  font-size: 10px;
+  color: #8fa8b4;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.cu-value {
+  font-size: 14px;
+  color: #ffffff;
+  font-weight: 600;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+}
+
+.cu-copy-btn {
+  margin-top: 6px;
+  padding: 4px 8px;
+  border: 1px solid #4ac5d4;
+  background: transparent;
+  color: #4ac5d4;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cu-copy-btn:hover {
+  background: #4ac5d4;
+  color: #0f2937;
+}
+
+.cu-cpi-details {
+  margin-top: 12px;
+}
+
+.cu-cpi-details summary {
+  cursor: pointer;
+  color: #4ac5d4;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px;
+  user-select: none;
+}
+
+.cu-cpi-details summary:hover {
+  background: #1a2d35;
+  border-radius: 3px;
+}
+
+.cu-cpi-tree {
+  margin-top: 8px;
+  margin-left: 12px;
+  border-left: 2px solid #3a5a68;
+  padding-left: 12px;
+}
+
+.cu-cpi-node {
+  margin-bottom: 8px;
+}
+
+.cu-cpi-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px;
+  background: #1a2d35;
+  border-radius: 3px;
+}
+
+.cu-program-id {
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+  font-size: 10px;
+  color: #dfeaf2;
+}
+
+.cu-cpi-cost {
+  font-size: 11px;
+  color: #4ac5d4;
+  font-weight: 600;
+}
+
+.cu-cpi-children {
+  margin-top: 8px;
+  margin-left: 16px;
+}
+
+.cu-cpi-child-node {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 4px;
+  background: rgba(74, 197, 212, 0.05);
+  border-radius: 3px;
+  margin-bottom: 4px;
+  border-left: 2px solid #4ac5d4;
+  padding-left: 8px;
+}
+
+.clean-details {
+  margin-top: 12px;
+  border: 1px solid #3a5a68;
+  border-radius: 4px;
+  padding: 8px;
+  background: #0f1e25;
+}
+
+.clean-details summary {
+  cursor: pointer;
+  color: #4ac5d4;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px;
+  user-select: none;
+}
+
+.clean-details summary:hover {
+  background: #1a2d35;
+  border-radius: 3px;
+}
