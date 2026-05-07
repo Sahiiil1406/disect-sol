@@ -1,4 +1,11 @@
-export function TraceList({ traces, selectedTraceId, onSelect }) {
+export function TraceList({
+  traces,
+  selectedTraceId,
+  onSelect,
+  highlightedTraceIds = [],
+}) {
+  const highlightedSet = new Set(highlightedTraceIds);
+
   return (
     <section className="list-pane">
       <div className="list-head">
@@ -14,7 +21,7 @@ export function TraceList({ traces, selectedTraceId, onSelect }) {
         {traces.map((trace) => (
           <article
             key={trace.traceId}
-            className={`event-item ${selectedTraceId === trace.traceId ? "selected" : ""}`}
+            className={`event-item ${selectedTraceId === trace.traceId ? "selected" : ""} ${highlightedSet.has(trace.traceId) ? "new-log-item" : ""}`}
             onClick={() => onSelect(trace.traceId)}
             role="button"
             tabIndex={0}

@@ -1,5 +1,5 @@
 # ChronoTrace Solana
-
+![alt text](./public/logo.png)
 ChronoTrace Solana is the missing observability layer for Solana dApp teams.
 
 Today, developers still debug one transaction across wallet popups, RPC payloads, explorer tabs, and raw logs. That fragmented workflow kills iteration speed and hides root causes. ChronoTrace turns it into one deterministic flow: capture, decode, inspect, explain.
@@ -20,7 +20,7 @@ ChronoTrace Solana answers these instantly in one place, during development, in 
 
 If Solana wants faster shipping cycles, fewer silent failures, and better UX in production dApps, this visibility layer is mandatory. We are building the equivalent of APM for on-chain transaction execution.
 
-<img width="1535" height="727" alt="ChronoTrace panel" src="https://github.com/user-attachments/assets/f356f400-c56d-40e3-988b-3e6b84dab3ae" />
+![alt text](./public/image.png)
 
 ## Core Capabilities
 
@@ -137,3 +137,34 @@ If Solana wants faster shipping cycles, fewer silent failures, and better UX in 
 5. Explain
    - UI presents a deterministic flow: request -> chain progress -> outcome.
    - Developers can answer root-cause questions without jumping across multiple tools.
+
+
+## More To Come
+1.Shareable trace links — upload to a lightweight backend and generate a permalink, similar to how Hardhat/Tenderly does it for EVM.
+
+
+2. Performance & Cost Intelligence
+- Compute unit optimizer — compare actual CU consumed vs the budget set, and suggest a tighter setComputeUnitLimit value. Saves fees, improves landing rate.
+
+- Fee history overlay — show priority fee vs current network percentiles so devs can see if they're under/overpaying at send time.
+
+- CPI cost breakdown — attribute compute usage per inner instruction, not just the transaction total.
+
+```
+The CU consumed lives directly in the RPC response logs — Solana emits "consumed X of Y compute units" as a program log line. You're already parsing logs in traceUtils.js, so this is a regex extraction. The budget comes from decoding the ComputeBudgetProgram.setComputeUnitLimit instruction, which you already decode. The recommendation formula is simply floor(consumed × 1.1) + 1000 — 10% safety headroom plus a fixed 1000 CU floor to avoid landing failures on jitter. Show three numbers inline in the trace header: budget set, actual consumed, suggested. Add a one-click "Copy fix" that inserts the correct setComputeUnitLimit(N) call.
+
+Feature 3: Fee History Overlay
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0.25s;
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
+  }
+VvisualizeVvisualize show_widgetCall getRecentPrioritizationFees (RPC method) immediately after you capture the BEFORE event for a transaction — at that point you have the slot context. Store the 150-slot fee sample alongside the trace, compute p25/p50/p75/p90 client-side in traceUtils.js, and compare the setComputeUnitPrice IX decoded from the transaction. Cache results for 5 seconds keyed by slot range so you don't hammer the RPC on rapid retries. The UI renders a simple horizontal gauge — a tick marks where the dev's fee lands relative to the four percentile bands.
+
+Feature 4: CPI Cost Breakdown
+This is the most architecturally interesting one. Solana's transaction logs contain invoke [N] depth markers that already encode the CPI hierarchy. The consumed CU for each invoke appears at success or failed lines immediately after. Your existing log parser in traceUtils.js already reconstructs the instruction tree — the CPI cost breakdown is purely an extension of that parser.
+The approach: parse the log stream into a stack. Each Program X invoke [N] pushes a frame. Each Program X consumed Y of Z pops it and records the delta. The key insight is that the top-level consumed is the total, and each inner consumed line represents just that CPI's own work. So CPI cost = frame.consumed - sum(children.consumed). This gives you a true attribution tree — you can show a treemap or indented list in TraceDetail.jsx where each row is a program and its isolated CU cost, not the cumulative total.
+No new RPC calls needed — it's all in the logs you already fetch.
+```
+3. dApp-side SDK — a lightweight JS package teams embed in production to capture real-user transaction failures and pipe them to a dashboard. This is the Sentry equivalent and the natural monetization path.

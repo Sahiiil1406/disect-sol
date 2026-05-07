@@ -6,6 +6,7 @@ import {
   Scripts,
   ScrollRestoration,
 } from "react-router";
+import { useEffect } from "react";
 
 import type { Route } from "./+types/root";
 import "./app.css";
@@ -24,6 +25,27 @@ export const links: Route.LinksFunction = () => [
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    let cancelled = false;
+
+    void import("@solana/web3.js")
+      .then((module) => {
+        if (cancelled) {
+          return;
+        }
+
+        (window as typeof window & { solanaWeb3?: typeof module }).solanaWeb3 =
+          module;
+      })
+      .catch(() => {
+        // Extension inpage bridge has its own fallback loader.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <html lang="en">
       <head>

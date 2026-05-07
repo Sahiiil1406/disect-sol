@@ -88,4 +88,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((error) => sendResponse({ ok: false, error: String(error) }));
     return true;
   }
+
+  if (message.type === "SOL_TRACE_REPLAY_COMMAND") {
+    chrome.tabs
+      .query({ active: true, currentWindow: true })
+      .then((tabs) => {
+        const activeTab = tabs.find((tab) => typeof tab.id === "number");
+        if (!activeTab?.id) {
+          sendResponse({ ok: false, error: "No active tab available" });
+          return null;
+        }
+
+        return chrome.tabs.sendMessage(activeTab.id, message).then((result) => {
+          sendResponse(result || { ok: false, error: "No replay response" });
+        });
+      })
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+    return true;
+  }
 });
