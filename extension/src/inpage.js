@@ -1,6 +1,81 @@
+let web3ConstructorsPromise = null;
+
+async function waitForWeb3Global(timeoutMs = 3000) {
+  if (window.solanaWeb3) {
+    return window.solanaWeb3;
+  }
+
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      if (window.solanaWeb3) {
+        window.clearInterval(timer);
+        resolve(window.solanaWeb3);
+        return;
+      }
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        window.clearInterval(timer);
+        resolve(null);
+      }
+    }, 100);
+  });
+}
+
+async function getWeb3Constructors() {
+  if (!web3ConstructorsPromise) {
+    web3ConstructorsPromise = new Promise((resolve, reject) => {
+      const resolveFromGlobal = (solanaWeb3) => {
+        resolve({
+          Connection: solanaWeb3.Connection,
+          PublicKey: solanaWeb3.PublicKey,
+          Transaction: solanaWeb3.Transaction,
+          TransactionInstruction: solanaWeb3.TransactionInstruction,
+        });
+      };
+
+      waitForWeb3Global().then((solanaWeb3) => {
+        if (solanaWeb3) {
+          resolveFromGlobal(solanaWeb3);
+          return;
+        }
+
+        const script = document.createElement("script");
+        script.async = false;
+        script.dataset.solTraceWeb3Loader = "1";
+        script.src =
+          "https://unpkg.com/@solana/web3.js@1.98.4/lib/index.iife.js";
+        script.onload = async () => {
+          const loadedWeb3 =
+            window.solanaWeb3 || (await waitForWeb3Global(1000));
+          if (!loadedWeb3) {
+            reject(
+              new Error(
+                "Solana web3.js loaded but window.solanaWeb3 is unavailable",
+              ),
+            );
+            return;
+          }
+
+          resolveFromGlobal(loadedWeb3);
+        };
+        script.onerror = () => {
+          reject(new Error("Failed to load Solana web3.js library"));
+        };
+
+        (document.head || document.documentElement).appendChild(script);
+      });
+    });
+  }
+
+  return web3ConstructorsPromise;
+}
+
 const BRIDGE_EVENT = "__DEVTOOLS_SOLANA_BRIDGE__";
 const BRIDGE_MESSAGE_TYPE = "__DEVTOOLS_SOLANA_BRIDGE_MESSAGE__";
 const BRIDGE_SOURCE = "sol-trace-inpage";
+const REPLAY_COMMAND = "SOL_TRACE_REPLAY_COMMAND";
+const REPLAY_RESPONSE = "SOL_TRACE_REPLAY_RESPONSE";
 
 if (window.__SOL_TRACE_INPAGE_INSTALLED__) {
   // Avoid duplicate wrappers if this script is injected more than once.
@@ -324,6 +399,506 @@ if (window.__SOL_TRACE_INPAGE_INSTALLED__) {
     }
 
     return { bytes: null, encoding: null };
+  }
+
+  function getProviderCandidates() {
+    return [
+      window.solana,
+      window.backpack?.solana,
+      window.phantom?.solana,
+      window.solflare,
+      window.okxwallet?.solana,
+      window.bitgetwallet?.solana,
+      window.coin98?.solana,
+      window.glow?.solana,
+      window.anchor?.provider?.wallet,
+    ].filter(Boolean);
+  }
+
+  function getWalletProvider() {
+    return getProviderCandidates().find(
+      (provider) =>
+        typeof provider.signTransaction === "function" ||
+        typeof provider.signAndSendTransaction === "function",
+    );
+  }
+
+  async function toPublicKey(value) {
+    if (!value) {
+      return null;
+    }
+
+    try {
+      const { PublicKey } = await getWeb3Constructors();
+      return new PublicKey(
+        typeof value === "string" ? value : value.pubkey || value.publicKey,
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  function decodeReplayInstructionData(data) {
+    const normalized = normalizeInstructionData(data);
+    return normalized.bytes || new Uint8Array();
+  }
+
+  function getTransactionAccountKeys(txData) {
+    const message =
+      txData?.transaction?.message || txData?.value?.transaction?.message || {};
+    return (message.accountKeys || message.staticAccountKeys || [])
+      .map((entry) =>
+        typeof entry === "string" ? entry : entry?.pubkey || entry?.publicKey,
+      )
+      .filter(Boolean);
+  }
+
+  function getTransactionMeta(txData) {
+    return txData?.meta || txData?.value?.meta || txData?.result?.meta || {};
+  }
+
+  function buildStateChangeRows(txData) {
+    const meta = getTransactionMeta(txData);
+    const accountKeys = getTransactionAccountKeys(txData);
+    const preBalances = Array.isArray(meta.preBalances) ? meta.preBalances : [];
+    const postBalances = Array.isArray(meta.postBalances)
+      ? meta.postBalances
+      : [];
+    const maxAccountCount = Math.max(
+      accountKeys.length,
+      preBalances.length,
+      postBalances.length,
+    );
+
+    const rows = [];
+    for (let index = 0; index < maxAccountCount; index += 1) {
+      const before = preBalances[index];
+      const after = postBalances[index];
+      if (before === undefined && after === undefined) {
+        continue;
+      }
+
+      if (before === after) {
+        continue;
+      }
+
+      rows.push({
+        kind: "lamports",
+        account: accountKeys[index] || `Account ${index}`,
+        accountIndex: index,
+        label: `Account ${index}`,
+        beforeValue: `${(before / 1_000_000_000).toFixed(6)} SOL (${before} lamports)`,
+        afterValue: `${(after / 1_000_000_000).toFixed(6)} SOL (${after} lamports)`,
+        rawBefore: before,
+        rawAfter: after,
+        delta:
+          typeof before === "number" && typeof after === "number"
+            ? after - before
+            : null,
+      });
+    }
+
+    return rows;
+  }
+
+  function mergeLogs(...sources) {
+    const merged = [];
+    const seen = new Set();
+
+    for (const source of sources) {
+      if (!Array.isArray(source)) {
+        continue;
+      }
+
+      for (const entry of source) {
+        if (typeof entry !== "string" || !entry.trim()) {
+          continue;
+        }
+
+        const key = entry.trim();
+        if (seen.has(key)) {
+          continue;
+        }
+
+        seen.add(key);
+        merged.push(entry);
+      }
+    }
+
+    return merged;
+  }
+
+  async function buildReplayTransaction(txDetails) {
+    const transaction = txDetails?.transaction || txDetails;
+    const message = transaction?.message;
+
+    if (!message || !Array.isArray(message.accountKeys)) {
+      return null;
+    }
+
+    const { Transaction, TransactionInstruction } = await getWeb3Constructors();
+    const tx = new Transaction();
+    const accountKeys = message.accountKeys.map((entry) =>
+      typeof entry === "string" ? entry : entry?.pubkey || entry?.publicKey,
+    );
+
+    const feePayer =
+      transaction?.feePayer || message.feePayer || accountKeys[0] || null;
+    const recentBlockhash =
+      transaction?.recentBlockhash || message.recentBlockhash || null;
+
+    if (feePayer) {
+      const payerKey = await toPublicKey(feePayer);
+      if (payerKey) {
+        tx.feePayer = payerKey;
+      }
+    }
+
+    if (recentBlockhash) {
+      tx.recentBlockhash = String(recentBlockhash);
+    }
+
+    const instructions = Array.isArray(message.instructions)
+      ? message.instructions
+      : [];
+
+    for (const instruction of instructions) {
+      const programId =
+        typeof instruction.programId === "string"
+          ? instruction.programId
+          : accountKeys[instruction.programIdIndex] || null;
+      const programKey = await toPublicKey(programId);
+      if (!programKey) {
+        continue;
+      }
+
+      const accountIndexes = Array.isArray(instruction.accounts)
+        ? instruction.accounts
+        : Array.isArray(instruction.accountKeyIndexes)
+          ? instruction.accountKeyIndexes
+          : [];
+
+      const keys = (
+        await Promise.all(
+          accountIndexes.map(async (index) => {
+            const accountMeta = message.accountKeys[index];
+            const address =
+              typeof accountMeta === "string"
+                ? accountMeta
+                : accountMeta?.pubkey || accountMeta?.publicKey;
+            const pubkey = await toPublicKey(address);
+            if (!pubkey) {
+              return null;
+            }
+
+            return {
+              pubkey,
+              isSigner: Boolean(accountMeta?.signer || accountMeta?.isSigner),
+              isWritable: Boolean(
+                accountMeta?.writable || accountMeta?.isWritable,
+              ),
+            };
+          }),
+        )
+      ).filter(Boolean);
+
+      tx.add(
+        new TransactionInstruction({
+          programId: programKey,
+          keys,
+          data: decodeReplayInstructionData(instruction.data),
+        }),
+      );
+    }
+
+    return tx;
+  }
+
+  function encodeBytesToBase64(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+      return "";
+    }
+
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      const chunk = bytes.subarray(index, index + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+
+    return btoa(binary);
+  }
+
+  async function rpcRequest(rpcEndpoint, method, params) {
+    const response = await fetch(rpcEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: Date.now(),
+        method,
+        params,
+      }),
+    }).then((result) => result.json());
+
+    if (response?.error) {
+      throw new Error(response.error.message || `RPC ${method} failed`);
+    }
+
+    return response?.result;
+  }
+
+  async function waitForTransaction(rpcEndpoint, signature, attempts = 12) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const tx = await rpcRequest(rpcEndpoint, "getTransaction", [
+        signature,
+        {
+          encoding: "json",
+          maxSupportedTransactionVersion: 0,
+        },
+      ]);
+
+      if (tx) {
+        return tx;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
+
+    return null;
+  }
+
+  async function simulateWithWallet(txDetails, rpcEndpoint) {
+    const wallet = getWalletProvider();
+    if (!wallet?.signTransaction && !wallet?.signAndSendTransaction) {
+      throw new Error("No wallet provider available for mock replay");
+    }
+
+    // Priority 1: Try to use the original serialized transaction bytes (most accurate)
+    const candidate =
+      txDetails?.transaction?.serialized ||
+      txDetails?.transaction?.serializedTx ||
+      txDetails?.serialized ||
+      txDetails?.raw?.serialized ||
+      null;
+
+    if (candidate) {
+      let base64 = null;
+      if (candidate instanceof Uint8Array || Array.isArray(candidate)) {
+        base64 = encodeBytesToBase64(
+          candidate instanceof Uint8Array
+            ? candidate
+            : Uint8Array.from(candidate),
+        );
+      } else if (typeof candidate === "string") {
+        base64 = candidate;
+      }
+
+      if (base64) {
+        try {
+          const simulation = await rpcRequest(
+            rpcEndpoint,
+            "simulateTransaction",
+            [
+              base64,
+              {
+                encoding: "base64",
+                sigVerify: false,
+                replaceRecentBlockhash: true,
+                commitment: "confirmed",
+              },
+            ],
+          );
+          const value = simulation?.value || simulation || {};
+          const meta = getTransactionMeta(txDetails);
+
+          return {
+            mode: "mock",
+            fee: meta.fee || 0,
+            computeUnits:
+              value.unitsConsumed ??
+              value.computeUnitsConsumed ??
+              meta.computeUnitsConsumed ??
+              0,
+            logs: mergeLogs(value.logs || [], meta.logMessages || []),
+            stateChanges: buildStateChangeRows(txDetails),
+            status: value.err || meta.err ? "failed" : "succeeded",
+            error: value.err || meta.err || null,
+            replayType: "raw-serialized-simulate",
+          };
+        } catch (err) {
+          console.warn("Serialized simulation failed, trying reconstruction:", err);
+        }
+      }
+    }
+
+    // Priority 2: Try to reconstruct Transaction object (requires web3.js in page)
+    const tx = await buildReplayTransaction(txDetails);
+    if (tx) {
+      try {
+        const signedTx = await wallet.signTransaction(tx);
+        const signedBytes = signedTx.serialize({
+          requireAllSignatures: false,
+          verifySignatures: false,
+        });
+        const serializedTx = encodeBytesToBase64(signedBytes);
+        const simulation = await rpcRequest(
+          rpcEndpoint,
+          "simulateTransaction",
+          [
+            serializedTx,
+            {
+              encoding: "base64",
+              sigVerify: false,
+              replaceRecentBlockhash: true,
+              commitment: "confirmed",
+            },
+          ],
+        );
+
+        const value = simulation?.value || simulation || {};
+        const meta = getTransactionMeta(txDetails);
+
+        return {
+          mode: "mock",
+          fee: meta.fee || 0,
+          computeUnits:
+            value.unitsConsumed ??
+            value.computeUnitsConsumed ??
+            meta.computeUnitsConsumed ??
+            0,
+          logs: mergeLogs(value.logs || [], meta.logMessages || []),
+          stateChanges: buildStateChangeRows(txDetails),
+          status: value.err || meta.err ? "failed" : "succeeded",
+          error: value.err || meta.err || null,
+          replayType: "wallet-confirmed-simulate",
+        };
+      } catch (err) {
+        throw new Error(
+          "Simulation failed: " +
+            err.message +
+            " (Make sure the page has window.solanaWeb3 available)",
+        );
+      }
+    }
+
+    throw new Error(
+      "Cannot replay transaction: This page needs to load the Solana web3.js library. " +
+        "Please ensure @solana/web3.js is available as window.solanaWeb3 on this page.",
+    );
+  }
+
+  async function replayOnChain(txDetails, rpcEndpoint) {
+    const wallet = getWalletProvider();
+    if (!wallet) {
+      throw new Error("No wallet provider available for on-chain replay");
+    }
+
+    // The only reliable way to replay transactions is to reconstruct the Transaction object
+    // This requires window.solanaWeb3 (web3.js library) to be available on the page
+    const tx = await buildReplayTransaction(txDetails);
+    if (!tx) {
+      throw new Error(
+        "Cannot replay transaction: This page needs to load the Solana web3.js library. " +
+          "Please ensure @solana/web3.js is available as window.solanaWeb3 on this page.",
+      );
+    }
+
+    let signature = null;
+
+    try {
+      const { Connection } = await getWeb3Constructors();
+      const connection = new Connection(rpcEndpoint, "confirmed");
+
+      if (typeof wallet.sendTransaction === "function") {
+        try {
+          const response = await wallet.sendTransaction(tx, connection, {
+            skipPreflight: false,
+            preflightCommitment: "confirmed",
+            maxRetries: 3,
+          });
+          signature =
+            typeof response === "string"
+              ? response
+              : response?.signature || response?.txid || null;
+        } catch {
+          signature = null;
+        }
+      }
+
+      if (typeof wallet.signAndSendTransaction === "function") {
+        try {
+          const response = await wallet.signAndSendTransaction(tx);
+          signature =
+            typeof response === "string"
+              ? response
+              : response?.signature || response?.txid || null;
+        } catch {
+          const signedTx = await wallet.signTransaction(tx);
+          const signedBytes = signedTx.serialize({
+            requireAllSignatures: false,
+            verifySignatures: false,
+          });
+          const serializedTx = encodeBytesToBase64(signedBytes);
+          signature = await rpcRequest(rpcEndpoint, "sendTransaction", [
+            serializedTx,
+            {
+              encoding: "base64",
+              skipPreflight: false,
+              preflightCommitment: "confirmed",
+              maxRetries: 3,
+            },
+          ]);
+        }
+      } else if (typeof wallet.signTransaction === "function") {
+        const signedTx = await wallet.signTransaction(tx);
+        const signedBytes = signedTx.serialize({
+          requireAllSignatures: false,
+          verifySignatures: false,
+        });
+        const serializedTx = encodeBytesToBase64(signedBytes);
+        signature = await rpcRequest(rpcEndpoint, "sendTransaction", [
+          serializedTx,
+          {
+            encoding: "base64",
+            skipPreflight: false,
+            preflightCommitment: "confirmed",
+            maxRetries: 3,
+          },
+        ]);
+      }
+
+      if (!signature) {
+        throw new Error("Wallet did not return a valid signature");
+      }
+
+      const transaction = await waitForTransaction(rpcEndpoint, signature);
+      const meta = transaction
+        ? getTransactionMeta(transaction)
+        : getTransactionMeta(txDetails);
+      const txMeta = getTransactionMeta(txDetails);
+
+      return {
+        mode: "real",
+        signature,
+        fee: meta.fee || 0,
+        computeUnits: meta.computeUnitsConsumed || 0,
+        logs: mergeLogs(meta.logMessages || [], txMeta.logMessages || []),
+        stateChanges: buildStateChangeRows(transaction || txDetails),
+        status: meta.err ? "failed" : "succeeded",
+        error: meta.err || null,
+        replayType: "wallet-confirmed-onchain",
+        slot: transaction?.slot || null,
+      };
+    } catch (err) {
+      throw new Error(
+        "On-chain replay failed: " +
+          err.message +
+          " (Make sure the page has window.solanaWeb3 available)",
+      );
+    }
   }
 
   function decodeSystemInstruction(bytes) {
@@ -984,13 +1559,12 @@ if (window.__SOL_TRACE_INPAGE_INSTALLED__) {
   }
 
   function hookConnectionPrototype() {
-    const web3Global = window.solanaWeb3;
-    const Connection = web3Global?.Connection;
-    if (!Connection?.prototype) {
+    const ConnectionCtor = window.solanaWeb3?.Connection;
+    if (!ConnectionCtor?.prototype) {
       return false;
     }
 
-    const target = Connection.prototype;
+    const target = ConnectionCtor.prototype;
     if (wrappedTargets.has(target)) {
       return true;
     }
@@ -1084,6 +1658,83 @@ if (window.__SOL_TRACE_INPAGE_INSTALLED__) {
     return current;
   }
 
+  function watchProviderPath(path) {
+    if (!Array.isArray(path) || path.length === 0) {
+      return;
+    }
+
+    try {
+      const [rootKey, ...rest] = path;
+
+      if (rest.length === 0) {
+        const descriptor = Object.getOwnPropertyDescriptor(window, rootKey);
+        if (descriptor?.configurable === false) {
+          return;
+        }
+
+        let storedValue = window[rootKey];
+        if (storedValue) {
+          hookWallet(storedValue);
+        }
+
+        Object.defineProperty(window, rootKey, {
+          configurable: true,
+          enumerable: true,
+          get() {
+            return storedValue;
+          },
+          set(nextValue) {
+            storedValue = nextValue;
+            if (nextValue) {
+              try {
+                hookWallet(nextValue);
+              } catch (error) {
+                reportHookIssue("providerPath", path.join("."), error);
+              }
+            }
+          },
+        });
+        return;
+      }
+
+      const parent = resolvePath(window, [rootKey, ...rest.slice(0, -1)]);
+      const leafKey = rest[rest.length - 1];
+      if (!parent || typeof parent !== "object") {
+        return;
+      }
+
+      const descriptor = Object.getOwnPropertyDescriptor(parent, leafKey);
+      if (descriptor?.configurable === false) {
+        return;
+      }
+
+      let storedValue = parent[leafKey];
+      if (storedValue) {
+        hookWallet(storedValue);
+      }
+
+      Object.defineProperty(parent, leafKey, {
+        configurable: true,
+        enumerable: true,
+        get() {
+          return storedValue;
+        },
+        set(nextValue) {
+          storedValue = nextValue;
+          if (nextValue) {
+            try {
+              hookWallet(nextValue);
+            } catch (error) {
+              reportHookIssue("providerPath", path.join("."), error);
+            }
+          }
+        },
+      });
+    } catch (error) {
+      reportHookIssue("providerPath", path.join("."), error);
+    }
+  }
+
   function hookDiscoveredWallets() {
     let hooked = false;
 
@@ -1153,6 +1804,15 @@ if (window.__SOL_TRACE_INPAGE_INSTALLED__) {
       if (window.phantom?.solana) {
         hookWallet(window.phantom.solana);
       }
+
+      watchProviderPath(["solana"]);
+      watchProviderPath(["phantom", "solana"]);
+      watchProviderPath(["backpack", "solana"]);
+      watchProviderPath(["solflare"]);
+      watchProviderPath(["okxwallet", "solana"]);
+      watchProviderPath(["bitgetwallet", "solana"]);
+      watchProviderPath(["coin98", "solana"]);
+      watchProviderPath(["glow", "solana"]);
     } catch (error) {
       reportHookIssue("scan", "walletFallback", error);
     }
@@ -1168,6 +1828,62 @@ if (window.__SOL_TRACE_INPAGE_INSTALLED__) {
     at: now(),
     url: location.href,
     result: "Connection + wallet + network hooks initialized",
+  });
+
+  window.addEventListener("message", async (event) => {
+    if (event.source !== window) {
+      return;
+    }
+
+    const data = event?.data;
+    if (
+      !data ||
+      data.type !== BRIDGE_MESSAGE_TYPE ||
+      data.source !== BRIDGE_SOURCE
+    ) {
+      return;
+    }
+
+    const payload = data.payload || {};
+    if (payload.kind !== REPLAY_COMMAND) {
+      return;
+    }
+
+    const { requestId, command } = payload;
+    try {
+      const result =
+        command?.mode === "real"
+          ? await replayOnChain(command.txDetails, command.rpcEndpoint)
+          : await simulateWithWallet(command.txDetails, command.rpcEndpoint);
+
+      window.postMessage(
+        {
+          type: BRIDGE_MESSAGE_TYPE,
+          source: BRIDGE_SOURCE,
+          payload: {
+            kind: REPLAY_RESPONSE,
+            requestId,
+            ok: true,
+            result,
+          },
+        },
+        "*",
+      );
+    } catch (error) {
+      window.postMessage(
+        {
+          type: BRIDGE_MESSAGE_TYPE,
+          source: BRIDGE_SOURCE,
+          payload: {
+            kind: REPLAY_RESPONSE,
+            requestId,
+            ok: false,
+            error: error?.message || String(error),
+          },
+        },
+        "*",
+      );
+    }
   });
 
   window.addEventListener("beforeunload", () => {

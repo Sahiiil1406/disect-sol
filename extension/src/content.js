@@ -1,8 +1,11 @@
 const BRIDGE_MESSAGE_TYPE = "__DEVTOOLS_SOLANA_BRIDGE_MESSAGE__";
 const BRIDGE_SOURCE = "sol-trace-inpage";
+const REPLAY_COMMAND = "SOL_TRACE_REPLAY_COMMAND";
+const REPLAY_RESPONSE = "SOL_TRACE_REPLAY_RESPONSE";
 const STORAGE_KEY = "rpcEvents";
 const MAX_EVENTS = 250;
 let lastForwardedKey = null;
+const pendingReplayRequests = new Map();
 
 function createStampedEvent(payload) {
   return {
@@ -94,6 +97,21 @@ function forwardBridgeDetail(detail) {
   sendRpcEvent(detail);
 }
 
+function postReplayCommandToPage(payload) {
+  window.postMessage(
+    {
+      type: BRIDGE_MESSAGE_TYPE,
+      source: BRIDGE_SOURCE,
+      payload: {
+        kind: REPLAY_COMMAND,
+        requestId: payload.requestId,
+        command: payload.command,
+      },
+    },
+    "*",
+  );
+}
+
 injectInpageScript();
 
 window.addEventListener("message", (event) => {
@@ -110,7 +128,38 @@ window.addEventListener("message", (event) => {
     return;
   }
 
+  if (data?.payload?.kind === REPLAY_RESPONSE) {
+    const pending = pendingReplayRequests.get(data.payload.requestId);
+    if (pending) {
+      pendingReplayRequests.delete(data.payload.requestId);
+      pending(data.payload);
+    }
+    return;
+  }
+
   forwardBridgeDetail(data.payload);
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "SOL_TRACE_REPLAY_COMMAND") {
+    return;
+  }
+
+  const requestId = crypto.randomUUID();
+  pendingReplayRequests.set(requestId, (payload) => {
+    sendResponse({
+      ok: payload.ok,
+      result: payload.result,
+      error: payload.error,
+    });
+  });
+
+  postReplayCommandToPage({
+    requestId,
+    command: message.payload,
+  });
+
+  return true;
 });
 
 sendRpcEvent({
